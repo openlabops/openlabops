@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Atomic Test Helper: Execute Day-0 Onboarding Pipeline inside Mock Console
+# File: tests/bin/test-day0-onboard
+# ==============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_NAME="$(basename "${REPO_ROOT}")"
+
+GITEA_MODE="${GITEA_MODE:-standalone}"
+GITEA_URL="${GITEA_URL:-http://172.28.0.2:3000}"
+RUN_FULL_TESTS="${RUN_FULL_TESTS:-false}"
+TEST_LANG="${LAB_LANG:-${LAB_LANG:-zh_TW}}"
+
+echo "[•] Triggering Day-0 Onboarding Pipeline inside mock-console as user labadmin (Gitea Mode: ${GITEA_MODE}, Locale: ${TEST_LANG})..."
+docker exec -e PROJECT_NAME="${PROJECT_NAME}" -e GITEA_MODE="${GITEA_MODE}" -e GITEA_URL="${GITEA_URL}" -e RUN_FULL_TESTS="${RUN_FULL_TESTS}" -e LAB_LANG="${TEST_LANG}" -e LAB_LANG="${TEST_LANG}" -u labadmin mock-console bash /home/labadmin/entrypoint_console.sh
+echo "[✓] Day-0 onboarding and verification completed successfully inside mock-console!"
+

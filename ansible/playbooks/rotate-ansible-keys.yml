@@ -1,0 +1,146 @@
+---
+# ==============================================================================
+# Playbook: Rotate Ansible Automation SSH Key Across Fleet (Canonical Role: ansible)
+# Neutralized for OpenLabOps / OpenLabOps Operations Engine
+# ==============================================================================
+
+# ==============================================================================
+# Play 1: 追加新 SSH 公鑰至目標主機 authorized_keys
+# ==============================================================================
+- name: "追加新 Ansible 管理公鑰 (Stage 1 - Add New Public Key)"
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: no
+  tags:
+    - add_new_key
+  vars:
+    ansible_key_filename: "{{ (keys.ansible | regex_replace('\\.key$', '.pub')) if keys is defined and keys.ansible is defined else ('ansible.pub' if ansible_user != 'lab' else 'lab.pub') }}"
+    new_pub_key_path: "{{ custom_pub_key_path | default('/tmp/ssh_rotation/' + ansible_key_filename) }}"
+    ansible_ssh_private_key_file: "{{ bootstrap_key | default(current_priv_key_path | default(omit)) }}"
+  tasks:
+    - name: 讀取新公鑰內容
+      ansible.builtin.slurp:
+        src: "{{ new_pub_key_path }}"
+      register: new_pub_key_b64
+      delegate_to: localhost
+
+    - name: 將新 SSH 公鑰部署至 authorized_keys (含子網白名單限制)
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user | default('lab') }}"
+        state: present
+        key: "{{ new_pub_key_b64.content | b64decode | trim }}"
+        key_options: "{{ ansible_key_options | default('from=\"192.168.1.0/24\"') }}"
+
+# ==============================================================================
+# Play 2: 使用新 SSH 私鑰驗證所有主機連線
+# ==============================================================================
+- name: "驗證新 Ansible 管理私鑰連線 (Stage 2 - Verify Connection with New Private Key)"
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: no
+  tags:
+    - verify_new_key
+  vars:
+    ansible_priv_key_filename: "{{ (keys.ansible | regex_replace('\\.pub$', '.key')) if keys is defined and keys.ansible is defined else 'ansible.key' }}"
+    ansible_ssh_private_key_file: "{{ new_priv_key_path | default('/tmp/ssh_rotation/' + ansible_priv_key_filename) }}"
+  tasks:
+    - name: 測試新私鑰 SSH Ping 連線
+      ansible.builtin.ping:
+
+# ==============================================================================
+# Play 3: 安全移除舊 SSH 公鑰
+# ==============================================================================
+- name: "安全移除舊 Ansible 管理公鑰 (Stage 3 - Remove Old Public Key)"
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: no
+  tags:
+    - remove_old_key
+  vars:
+    ansible_priv_key_filename: "{{ (keys.ansible | regex_replace('\\.pub$', '.key')) if keys is defined and keys.ansible is defined else 'ansible.key' }}"
+    ansible_ssh_private_key_file: "{{ new_priv_key_path | default('/tmp/ssh_rotation/' + ansible_priv_key_filename) }}"
+  tasks:
+    - name: 從 authorized_keys 移除舊 SSH 公鑰
+      ansible.posix.authorized_key:
+        user: "{{ ansible_user | default('lab') }}"
+        state: absent
+        key: "{{ old_pub_key }}"
+      when: old_pub_key is defined and old_pub_key | length > 0
+
+# ==============================================================================
+# Play 4: 更新節點與本機紀錄之 Git Commit SHA 及解除開機門禁標記
+# ==============================================================================
+- name: "更新 Git Commit SHA 紀錄與開機門禁狀態 (Stage 4 - Update Synced Commit & Release Lockout)"
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: no
+  tags:
+    - update_commit_stamp
+  vars:
+    ansible_priv_key_filename: "{{ (keys.ansible | regex_replace('\\.pub$', '.key')) if keys is defined and keys.ansible is defined else 'ansible.key' }}"
+    ansible_ssh_private_key_file: "{{ new_priv_key_path | default('/tmp/ssh_rotation/' + ansible_priv_key_filename) }}"
+    control_secrets_candidates:
+      - "{{ custom_secrets_dir | default('/nonexistent') }}"
+      - "/tmp/openlab-secrets"
+      - "/tmp/openlab-secrets"
+      - "{{ lookup('env', 'HOME') }}/openlab-secrets"
+      - "{{ lookup('env', 'HOME') }}/openlab-secrets"
+  tasks:
+    - name: 探測控制端機密庫 (openlab-secrets / openlab-secrets) 路徑
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      loop: "{{ control_secrets_candidates }}"
+      register: secrets_stats
+      changed_when: false
+
+    - name: 確定控制端可用機密庫路徑
+      ansible.builtin.set_fact:
+        resolved_secrets_dir: "{{ (secrets_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('.') }}"
+
+    - name: 取得機密庫 (openlab-secrets) 最新 Git Commit SHA
+      ansible.builtin.command: git rev-parse HEAD
+      args:
+        chdir: "{{ resolved_secrets_dir }}"
+      delegate_to: localhost
+      become: false
+      register: current_git_sha
+      changed_when: false
+      failed_when: false
+
+    - name: 確保目標節點 /etc/openlab 目錄存在
+      ansible.builtin.file:
+        path: /etc/openlab
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+      ignore_errors: true
+
+    - name: 在目標節點更新 /etc/openlab/last_synced_commit
+      ansible.builtin.copy:
+        content: "{{ current_git_sha.stdout | default('HEAD') }}\n"
+        dest: /etc/openlab/last_synced_commit
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      ignore_errors: true
+
+    - name: 確保目標節點 /run/openlab 目錄存在
+      ansible.builtin.file:
+        path: /run/openlab
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      become: true
+      ignore_errors: true
+
+    - name: 建立目標節點 /run/openlab/synced_ok 解除門禁
+      ansible.builtin.copy:
+        content: "synced_ok\n"
+        dest: /run/openlab/synced_ok
+        owner: root
+        group: root
+        mode: '0644'
+      become: true
+      ignore_errors: true

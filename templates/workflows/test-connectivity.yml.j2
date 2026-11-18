@@ -1,0 +1,31 @@
+name: Test Network & SSH Connectivity Matrix
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_hosts:
+        description: 'Target Host(s) or Group (default: all)'
+        required: false
+        default: 'all'
+
+jobs:
+  test-connectivity:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
+
+      - name: 執行網路連通矩陣測試劇本
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/test-connectivity.yml'
+          target_hosts: ${{ '{' }}{{ '{' }} inputs.target_hosts || 'all' {{ '}' }}{{ '}' }}
+          key_name: '{{ keys.ansible | default("ansible.key") }}'
+          gitea_host: ${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}
+          org_name: ${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}
+          token: ${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}

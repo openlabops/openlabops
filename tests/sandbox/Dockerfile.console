@@ -1,0 +1,17 @@
+FROM archlinux:latest
+
+RUN pacman -Syu --noconfirm git openssh sudo python ansible iproute2 procps-ng rsync which && \
+    useradd -m -s /bin/bash -G wheel labadmin && \
+    echo "labadmin:labtest123" | chpasswd && \
+    echo "%wheel ALL=(ALL:ALL) NOPASSWD: ALL" > /etc/sudoers.d/wheel && \
+    chmod 0440 /etc/sudoers.d/wheel && \
+    mkdir -p /home/labadmin/.ssh && \
+    printf "StrictHostKeyChecking accept-new\nUserKnownHostsFile /dev/null\nLogLevel ERROR\n" > /home/labadmin/.ssh/config && \
+    chmod 0700 /home/labadmin/.ssh && \
+    chmod 0600 /home/labadmin/.ssh/config && \
+    chown -R labadmin:labadmin /home/labadmin
+
+USER labadmin
+WORKDIR /home/labadmin
+
+CMD ["sleep", "infinity"]

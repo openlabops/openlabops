@@ -1,0 +1,63 @@
+---
+# ==============================================================================
+# Role Tasks: ssh_keys
+# 統籌分發 SSH 金鑰生命週期管理任務 (Action Dispatcher)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 0. 探測控制端 (Runner) 上的機密庫與組態庫可用路徑
+# ------------------------------------------------------------------------------
+- name: 探測控制端機密庫 (openlab-secrets) 路徑
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop: "{{ control_secrets_candidates }}"
+  register: secrets_stats
+
+- name: 確定控制端可用機密庫路徑
+  ansible.builtin.set_fact:
+    resolved_secrets_dir: "{{ (secrets_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+- name: 探測控制端組態庫 (openlab-configs) 路徑
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop: "{{ control_configs_candidates }}"
+  register: configs_stats
+
+- name: 確定控制端可用組態庫路徑
+  ansible.builtin.set_fact:
+    resolved_configs_dir: "{{ (configs_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+# ------------------------------------------------------------------------------
+# 1. 依據 ssh_keys_action 執行對應工作流
+# ------------------------------------------------------------------------------
+- name: 執行節點綜合金鑰部署工作流 (Authorized Keys / Client Keys / SSH Config)
+  ansible.builtin.include_tasks: deploy_node.yml
+  when: ssh_keys_action == 'deploy_node'
+
+- name: 執行單一端點公鑰部署工作流
+  ansible.builtin.include_tasks: manage_host_key.yml
+  vars:
+    manage_state: present
+  when: ssh_keys_action == 'deploy_host_key'
+
+- name: 執行單一端點公鑰撤銷工作流
+  ansible.builtin.include_tasks: manage_host_key.yml
+  vars:
+    manage_state: absent
+  when: ssh_keys_action == 'revoke_host_key'
+
+- name: "執行金鑰輪換 Stage 1: 追加新公鑰"
+  ansible.builtin.include_tasks: rotate_stage1_add.yml
+  when: ssh_keys_action == 'rotate_stage1'
+
+- name: "執行金鑰輪換 Stage 2: 驗證新私鑰連線"
+  ansible.builtin.include_tasks: rotate_stage2_verify.yml
+  when: ssh_keys_action == 'rotate_stage2'
+
+- name: "執行金鑰輪換 Stage 3: 安全撤銷舊公鑰"
+  ansible.builtin.include_tasks: rotate_stage3_remove.yml
+  when: ssh_keys_action == 'rotate_stage3'

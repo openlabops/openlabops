@@ -1,0 +1,240 @@
+---
+# ==============================================================================
+# Playbook: 7/24 Server Node Automated Provisioning & Baseline Setup
+# Target: servers (or override via --extra-vars "target_hosts=...")
+# Phases / Tags:
+#   - bootstrap    : 初始納管 (建立 lab/labadmin 帳號, Sudoers 免密, 注入 SSH 公鑰, 安裝 Python)
+#   - base_setup   : 系統基線 (時區 UTC, 語系 en_US.UTF-8, 安裝 common_packages, SSHD 硬化)
+#   - docker_setup : 容器環境 (建立 docker-compose 工作目錄, 部署 post-push trigger hook)
+# Usage:
+#   全流程: ansible-playbook -i inventory/hosts.yml playbooks/node-provisioning.yml
+#   單階段: ansible-playbook -i inventory/hosts.yml playbooks/node-provisioning.yml --tags "base_setup"
+# ==============================================================================
+
+# ==============================================================================
+# Phase 0: Bootstrap (初始節點納管)
+# ==============================================================================
+- name: "Phase 0: 伺服器初次納管 (Bootstrap Account & Access)"
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: false
+  become: true
+  tags:
+    - bootstrap
+
+  vars:
+    automation_user: "{{ ansible_user | default('lab') }}"
+    admin_account: "{{ admin_user | default('labadmin') }}"
+    automation_pub_name: "{{ (keys.ansible | regex_replace('\\.key$', '.pub')) if keys is defined and keys.ansible is defined else 'lab.pub' }}"
+    admin_pub_name: "{{ (keys.user | regex_replace('\\.key$', '.pub')) if keys is defined and keys.user is defined else 'openlab.pub' }}"
+    automation_key_opts: "{{ ansible_key_options | default('from=\"192.168.1.0/24\"') }}"
+    admin_key_opts: "{{ user_key_options | default('from=\"192.168.1.0/24\"') }}"
+
+    default_users:
+      - name: "{{ automation_user }}"
+        sudo: "NOPASSWD: ALL"
+        groups: "wheel"
+        shell: "/bin/bash"
+        pub_key: "{{ automation_pub_name }}"
+        key_options: "{{ automation_key_opts }}"
+      - name: "{{ admin_account }}"
+        sudo: "ALL"
+        groups: "wheel"
+        shell: "/bin/bash"
+        pub_key: "{{ admin_pub_name }}"
+        key_options: "{{ admin_key_opts }}"
+
+    effective_users: "{{ users | default(default_users) }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 0.1 依 Distro 保證 Python 解譯器可用 (Raw 指令執行)
+    # --------------------------------------------------------------------------
+    - name: "[Raw] 確保 Photon OS Python3 已安裝"
+      ansible.builtin.raw: "tdnf install -y python3"
+      changed_when: false
+      failed_when: false
+
+    - name: "[Raw] 確保 Oracle Linux / OCI Python3 已安裝"
+      ansible.builtin.raw: "dnf install -y python3"
+      changed_when: false
+      failed_when: false
+
+    - name: "[Raw] 確保 Arch Linux Python 已安裝"
+      ansible.builtin.raw: "pacman -Sy --noconfirm python"
+      changed_when: false
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 0.2 讀取公鑰內容 (支援 ~/.ssh/、CI/CD 容器 /tmp 與開發機倉庫路徑)
+    # --------------------------------------------------------------------------
+    - name: 探測自動化運維公鑰檔案候選路徑
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      loop:
+        - "{{ custom_ansible_pub | default('/nonexistent') }}"
+        - "{{ lookup('env', 'HOME') + '/.ssh/' + automation_pub_name }}"
+        - "/tmp/openlab-secrets/ssh-key/{{ automation_pub_name }}"
+        - "{{ lookup('env', 'HOME') }}/openlab-secrets/ssh-key/{{ automation_pub_name }}"
+      register: automation_pub_candidates
+
+    - name: 確定自動化運維公鑰實際路徑
+      ansible.builtin.set_fact:
+        resolved_automation_pub: "{{ (automation_pub_candidates.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 讀取自動化運維公鑰內容
+      ansible.builtin.slurp:
+        src: "{{ resolved_automation_pub }}"
+      register: automation_pub_b64
+      delegate_to: localhost
+      when: resolved_automation_pub != ''
+      failed_when: false
+
+    - name: 探測管理者公鑰檔案候選路徑
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      loop:
+        - "{{ custom_lab_pub | default('/nonexistent') }}"
+        - "{{ lookup('env', 'HOME') + '/.ssh/' + admin_pub_name }}"
+        - "/tmp/openlab-secrets/ssh-key/{{ admin_pub_name }}"
+        - "{{ lookup('env', 'HOME') }}/openlab-secrets/ssh-key/{{ admin_pub_name }}"
+      register: admin_pub_candidates
+
+    - name: 確定管理者公鑰實際路徑
+      ansible.builtin.set_fact:
+        resolved_admin_pub: "{{ (admin_pub_candidates.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 讀取管理者公鑰內容
+      ansible.builtin.slurp:
+        src: "{{ resolved_admin_pub }}"
+      register: admin_pub_b64
+      delegate_to: localhost
+      when: resolved_admin_pub != ''
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 0.3 宣告式多使用者與權限初始化 (Declarative User Accounts & Sudoers)
+    # --------------------------------------------------------------------------
+    - name: 建立宣告式使用者帳號
+      ansible.builtin.user:
+        name: "{{ item.name }}"
+        state: present
+        shell: "{{ item.shell | default('/bin/sh' if (os_family | default('')) == 'BSD' else '/bin/bash') }}"
+        groups: "{{ item.groups | default(omit) }}"
+        append: yes
+        create_home: yes
+      loop: "{{ effective_users }}"
+
+    - name: 配置宣告式免密與提權 Sudoers (Linux)
+      ansible.builtin.copy:
+        dest: "/etc/sudoers.d/{{ item.name }}"
+        content: "{{ item.name }} ALL=(ALL) {{ item.sudo | default('ALL') }}\n"
+        mode: '0440'
+        validate: 'visudo -cf %s'
+      loop: "{{ effective_users }}"
+      when:
+        - item.sudo is defined and (item.sudo | length > 0)
+
+    - name: 部署宣告式使用者公鑰至 authorized_keys (含來源網段限制)
+      ansible.posix.authorized_key:
+        user: "{{ item.name }}"
+        state: present
+        key: >-
+          {{
+            (automation_pub_b64.content | b64decode | trim) if (item.pub_key == automation_pub_name and automation_pub_b64 is defined and automation_pub_b64.content is defined)
+            else ((admin_pub_b64.content | b64decode | trim) if (item.pub_key == admin_pub_name and admin_pub_b64 is defined and admin_pub_b64.content is defined)
+            else (lookup('file', item.pub_key, errors='ignore') | default('')))
+          }}
+        key_options: "{{ item.key_options | default(omit) }}"
+      loop: "{{ effective_users }}"
+      when: item.pub_key is defined and (item.pub_key | length > 0)
+
+
+# ==============================================================================
+# Phase 1: Base Setup (系統基線與環境調優)
+# ==============================================================================
+- name: "Phase 1: 伺服器系統基線配置 (System Baseline & Environment Tuning)"
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: true
+  become: true
+  tags:
+    - base_setup
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1.1 時區與語系標準化
+    # --------------------------------------------------------------------------
+    - name: 設定 Linux 系統時區
+      ansible.builtin.file:
+        src: "/usr/share/zoneinfo/{{ global_timezone | default('UTC') }}"
+        dest: /etc/localtime
+        state: link
+        force: yes
+      when: ansible_facts.system == 'Linux'
+
+    - name: 安裝 Photon OS 基礎套件 (tdnf)
+      ansible.builtin.package:
+        name: "{{ common_packages }}"
+        state: present
+      when: os_family == 'PhotonOS'
+
+    - name: 安裝 Oracle Linux 基礎套件 (dnf)
+      ansible.builtin.package:
+        name: "{{ common_packages }}"
+        state: present
+      when: os_family == 'OracleLinux'
+
+    - name: 安裝 Arch Linux 基礎套件 (pacman)
+      ansible.builtin.package:
+        name: "{{ common_packages }}"
+        state: present
+      when: os_family == 'ArchLinux'
+
+    # --------------------------------------------------------------------------
+    # 1.3 SSH 安全基線確認
+    # --------------------------------------------------------------------------
+    - name: 確保 SSH 服務已啟用並開機啟動
+      ansible.builtin.service:
+        name: "sshd"
+        state: started
+        enabled: yes
+
+
+# ==============================================================================
+# Phase 2: Service Setup (Docker 與服務掛載)
+# ==============================================================================
+- name: "Phase 2: Docker Compose 部署與 Hook 掛載"
+  hosts: servers
+  gather_facts: false
+  become: true
+  tags:
+    - docker_setup
+
+  tasks:
+    - name: 確保 docker-compose 工作目錄存在 ({{ docker_compose_dir }})
+      ansible.builtin.file:
+        path: "{{ docker_compose_dir }}"
+        state: directory
+        owner: "{{ 'labadmin' if os_family == 'PhotonOS' else 'root' }}"
+        mode: "{{ '0755' if os_family == 'PhotonOS' else '0700' }}"
+
+    - name: 檢查 docker-compose 是否已存在 .git 倉庫
+      ansible.builtin.stat:
+        path: "{{ docker_compose_dir }}/.git"
+      register: compose_git_stat
+
+    - name: 確保 .git/hooks 目錄存在
+      ansible.builtin.file:
+        path: "{{ docker_compose_dir }}/.git/hooks"
+        state: directory
+        mode: '0755'
+      when: compose_git_stat.stat.exists
+
+    - name: 安裝 post-push trigger hook
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/post-push-trigger.sh"
+        dest: "{{ docker_compose_dir }}/.git/hooks/post-push"
+        mode: '0755'
+        owner: "{{ 'labadmin' if os_family == 'PhotonOS' else 'root' }}"
+      when: compose_git_stat.stat.exists

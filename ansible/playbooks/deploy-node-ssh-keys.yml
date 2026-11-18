@@ -1,0 +1,221 @@
+---
+# ==============================================================================
+# Playbook: Deploy & Sync SSH Keys (Authorized Keys & Client Keys) to Target Nodes
+# Target: {{ target_hosts | default('control-node') }}
+# Runner Execution:
+#   ansible-playbook -i inventory/hosts.yml playbooks/deploy-node-ssh-keys.yml \
+#     --extra-vars "target_hosts=control-node deploy_client_keys=true deploy_ssh_config=true"
+# ==============================================================================
+- name: "在目標節點部署與同步 SSH 金鑰 (Authorized Keys & Client Keys)"
+  hosts: "{{ target_hosts | default('control-node') }}"
+  gather_facts: true
+  become: true
+
+  vars:
+    target_account: "{{ target_user | default(admin_user | default('labadmin')) }}"
+    ansible_account: "{{ ansible_service_user | default(cluster.ansible_user | default('lab')) if cluster is defined else (ansible_service_user | default('lab')) }}"
+    deploy_client_keys: "{{ (client_keys | default('true')) | bool }}"
+    deploy_authorized_keys: "{{ (authorized_keys | default(auth_keys | default('true'))) | bool }}"
+    deploy_ssh_config: "{{ (ssh_config | default('true')) | bool }}"
+    ssh_profile: "{{ profile | default(cluster.name | lower if cluster is defined else 'openlab') }}"
+    user_pub_filename: "{{ (keys.user | regex_replace('\\.key$', '.pub')) if keys is defined and keys.user is defined else 'openlab.pub' }}"
+    ansible_pub_filename: "{{ (keys.ansible | regex_replace('\\.key$', '.pub')) if keys is defined and keys.ansible is defined else 'lab.pub' }}"
+
+    control_secrets_candidates:
+      - "{{ custom_secrets_dir | default('/nonexistent') }}"
+      - "/tmp/openlab-secrets"
+      - "{{ lookup('env', 'HOME') }}/openlab-secrets"
+
+    control_configs_candidates:
+      - "{{ custom_configs_dir | default('/nonexistent') }}"
+      - "/tmp/openlab-configs"
+      - "{{ lookup('env', 'HOME') }}/openlab-configs"
+
+    managed_key_names:
+      - "{{ (keys.user | default('id_user.key')) if keys is defined else 'id_user.key' }}"
+      - "{{ (keys.user | regex_replace('\\.key$', '.pub')) if keys is defined and keys.user is defined else 'openlab.pub' }}"
+      - "{{ (keys.ansible | default('ansible.key')) if keys is defined else 'ansible.key' }}"
+      - "{{ (keys.ansible | regex_replace('\\.key$', '.pub')) if keys is defined and keys.ansible is defined else 'lab.pub' }}"
+      - "{{ (keys.git | default('git.key')) if keys is defined else 'git.key' }}"
+      - "{{ (keys.git | regex_replace('\\.key$', '.pub')) if keys is defined and keys.git is defined else 'git-openlab.pub' }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. 探測控制端 (Runner) 上的機密庫與組態庫路徑
+    # --------------------------------------------------------------------------
+    - name: 探測控制端機密庫 (openlab-secrets) 路徑
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      loop: "{{ control_secrets_candidates }}"
+      register: secrets_stats
+
+    - name: 確定控制端可用機密庫路徑
+      ansible.builtin.set_fact:
+        resolved_secrets_dir: "{{ (secrets_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 探測控制端組態庫 (openlab-configs) 路徑
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      loop: "{{ control_configs_candidates }}"
+      register: configs_stats
+
+    - name: 確定控制端可用組態庫路徑
+      ansible.builtin.set_fact:
+        resolved_configs_dir: "{{ (configs_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    # --------------------------------------------------------------------------
+    # 2. 確保目標主機使用者 SSH 目錄安全 (0700)
+    # --------------------------------------------------------------------------
+    - name: 確保 /home/{{ target_account }}/.ssh 目錄存在 (0700)
+      ansible.builtin.file:
+        path: "/home/{{ target_account }}/.ssh"
+        state: directory
+        owner: "{{ target_account }}"
+        group: "{{ target_account }}"
+        mode: '0700'
+
+    # --------------------------------------------------------------------------
+    # 3. 部署 Authorized Keys (受控公鑰寫入 authorized_keys，遵循 INV-07 角色映射)
+    # --------------------------------------------------------------------------
+    - name: 讀取管理使用者公鑰 ({{ user_pub_filename }}) 內容
+      ansible.builtin.slurp:
+        src: "{{ resolved_secrets_dir }}/ssh-key/{{ user_pub_filename }}"
+      delegate_to: localhost
+      become: false
+      register: openlab_pub_b64
+      when: deploy_authorized_keys and resolved_secrets_dir != ''
+
+    - name: 部署 {{ user_pub_filename }} 至 /home/{{ target_account }}/.ssh/authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ target_account }}"
+        state: present
+        key: "{{ openlab_pub_b64.content | b64decode | trim }}"
+        key_options: "{{ user_key_options | default('from=\"192.168.1.0/24\"') }}"
+        comment: "openlab-master"
+      when: deploy_authorized_keys and openlab_pub_b64.content is defined
+
+    - name: 清理 /home/{{ target_account }}/.ssh/authorized_keys 中舊版同 comment 之失效金鑰
+      ansible.builtin.lineinfile:
+        path: "/home/{{ target_account }}/.ssh/authorized_keys"
+        regexp: '^(?!.*{{ openlab_pub_b64.content | b64decode | trim | regex_escape }}).*openlab-master.*$'
+        state: absent
+      when: deploy_authorized_keys and openlab_pub_b64.content is defined
+      failed_when: false
+
+    - name: 讀取自動化公鑰 ({{ ansible_pub_filename }}) 內容
+      ansible.builtin.slurp:
+        src: "{{ resolved_secrets_dir }}/ssh-key/{{ ansible_pub_filename }}"
+      delegate_to: localhost
+      become: false
+      register: ansible_pub_b64
+      when: deploy_authorized_keys and resolved_secrets_dir != ''
+
+    - name: 部署 {{ ansible_pub_filename }} 至 /home/{{ ansible_account }}/.ssh/authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ ansible_account }}"
+        state: present
+        key: "{{ ansible_pub_b64.content | b64decode | trim }}"
+        key_options: "{{ ansible_key_options | default('from=\"192.168.1.0/24\"') }}"
+        comment: "lab-automation"
+      when: deploy_authorized_keys and ansible_pub_b64.content is defined
+      failed_when: false
+
+    - name: 清理 /home/{{ ansible_account }}/.ssh/authorized_keys 中舊版同 comment 之失效金鑰
+      ansible.builtin.lineinfile:
+        path: "/home/{{ ansible_account }}/.ssh/authorized_keys"
+        regexp: '^(?!.*{{ ansible_pub_b64.content | b64decode | trim | regex_escape }}).*lab-automation.*$'
+        state: absent
+      when: deploy_authorized_keys and ansible_pub_b64.content is defined
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 4. 部署受控管理端金鑰 (Client Keys: 嚴格僅限 dev 控制台主機，恪守 INV-02)
+    # --------------------------------------------------------------------------
+    - name: 複製管理端金鑰至 /home/{{ target_account }}/.ssh/ (僅限 dev 節點)
+      ansible.builtin.copy:
+        src: "{{ resolved_secrets_dir }}/ssh-key/{{ item }}"
+        dest: "/home/{{ target_account }}/.ssh/{{ item }}"
+        owner: "{{ target_account }}"
+        group: "{{ target_account }}"
+        mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
+      loop: "{{ managed_key_names }}"
+      when: deploy_client_keys and resolved_secrets_dir != '' and ('dev' in group_names or (node_category | default('')) == 'dev')
+
+    # --------------------------------------------------------------------------
+    # 5. 部署標準 ~/.ssh/config 連線組態
+    # --------------------------------------------------------------------------
+    - name: 複製標準 SSH Config 至 /home/{{ target_account }}/.ssh/config
+      ansible.builtin.copy:
+        src: "{{ resolved_configs_dir }}/ssh-config/{{ ssh_profile }}/config"
+        dest: "/home/{{ target_account }}/.ssh/config"
+        owner: "{{ target_account }}"
+        group: "{{ target_account }}"
+        mode: '0600'
+        backup: yes
+      when: deploy_ssh_config and resolved_configs_dir != ''
+
+    # --------------------------------------------------------------------------
+    # 6. 更新目標節點之 openlab-secrets Git Commit SHA 記錄與解鎖門禁
+    # --------------------------------------------------------------------------
+    - name: 取得機密庫 (openlab-secrets) 最新 Git Commit SHA
+      ansible.builtin.command: git rev-parse HEAD
+      args:
+        chdir: "{{ resolved_secrets_dir | default('.') }}"
+      delegate_to: localhost
+      become: false
+      register: current_git_sha
+      changed_when: false
+      failed_when: false
+
+    - name: 確保目標節點 /etc/openlab 目錄存在
+      ansible.builtin.file:
+        path: /etc/openlab
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: 在目標節點記錄最新已同步之 openlab-secrets Commit SHA
+      ansible.builtin.copy:
+        content: "{{ current_git_sha.stdout | default('HEAD') }}\n"
+        dest: /etc/openlab/last_synced_commit
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: 確保目標節點 /run/openlab 目錄存在
+      ansible.builtin.file:
+        path: /run/openlab
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: 建立目標節點 /run/openlab/synced_ok 解除門禁
+      ansible.builtin.copy:
+        content: "synced_ok\n"
+        dest: /run/openlab/synced_ok
+        owner: root
+        group: root
+        mode: '0644'
+
+    # --------------------------------------------------------------------------
+    # 7. 部署完成資訊
+    # --------------------------------------------------------------------------
+    - name: 輸出 SSH 金鑰部署摘要
+      ansible.builtin.debug:
+        msg:
+          - "=========================================================================="
+          - "✅ [SUCCESS] SSH 金鑰已成功部署至節點: {{ inventory_hostname }} ({{ ansible_host }})"
+          - "=========================================================================="
+          - "目標使用者: {{ target_account }}"
+          - "Authorized Keys 更新: {{ deploy_authorized_keys }}"
+          - "Client Management Keys 更新: {{ deploy_client_keys }}"
+          - "SSH Config 更新: {{ deploy_ssh_config }} (Profile: {{ ssh_profile }})"
+          - "已同步 Secrets Commit: {{ current_git_sha.stdout | default('HEAD') }}"
+          - "金鑰安全權限: 私鑰 0600 / 公鑰 0644 / .ssh 目錄 0700"
+          - "=========================================================================="

@@ -1,0 +1,47 @@
+name: Manual Sync Package Inventory & IaC Drift Check
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_hosts:
+        description: '目標主機或群組 (例如: servers, all, dev)'
+        required: false
+        default: 'servers:!hypervisors:!storage'
+      apply_sync:
+        description: '是否將線上現況寫入 host_vars (預設 false: 僅比對漂移不寫入)'
+        type: boolean
+        required: false
+        default: false
+
+jobs:
+  sync-package-inventory:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GIT_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
+
+      - name: 執行套件清單採集與比對劇本
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/sync-package-inventory.yml'
+          target_hosts: ${{ inputs.target_hosts }}
+          extra_vars: "apply_sync=${{ inputs.apply_sync }}"
+          key_name: 'ansible.key'
+          gitea_host: ${{ vars.GIT_HOST || 'gitea.lab' }}
+          org_name: ${{ vars.ORG_NAME || 'OpenLabOps' }}
+          token: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}
+
+      - name: 提交並推送 host_vars 變更至 Ansible 倉庫
+        if: ${{ inputs.apply_sync == true }}
+        uses: ./.gitea/actions/git-sync-commit
+        with:
+          target_dir: '/tmp/openlab-ansible'
+          commit_msg: 'chore(iac): sync host_vars package inventory from live nodes'
+          author_name: 'ci-bot'
+          author_email: 'ci-bot@lab'
+          branch: 'main'

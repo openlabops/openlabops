@@ -1,0 +1,134 @@
+---
+# ==============================================================================
+# Playbook: Check and Interactive Upgrade Packages Across Nodes
+# Target: servers (or override via --extra-vars "target_hosts=...")
+# 說明:
+#   - 呼叫 custom_package_facts 模組的 check_upgrades 功能，比對 upstream repo 檢測新版套件
+#   - 支援 Arch Linux (pacman/yay) (pkg), Photon OS (tdnf), Oracle Linux / RHEL (dnf)
+#   - 終端清楚列出有哪些套件有新版本 (套件名稱、目前版本、新版本、來源)
+#   - 互動詢問使用者是否執行更新 (支援 -e "auto_upgrade=true" 自動升級)
+# ==============================================================================
+
+- name: 全網節點套件新版比對與互動式升級維護
+  hosts: "{{ target_hosts | default('servers') }}"
+
+  gather_facts: true
+  become: false
+
+  vars:
+    auto_upgrade: false
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. 透過 custom_package_facts 模組檢查節點可用更新
+    # --------------------------------------------------------------------------
+    - name: 透過 custom_package_facts 檢查節點是否有可用之新版套件
+      custom_package_facts:
+        check_upgrades: true
+      become: true
+
+    # --------------------------------------------------------------------------
+    # 2. 顯示更新檢測結果
+    # --------------------------------------------------------------------------
+    - name: 顯示系統已為最新版本 (無可用更新)
+      ansible.builtin.debug:
+        msg: "✅ [{{ inventory_hostname }}] 系統套件皆為最新版本，無需升級。"
+      when: (ansible_facts.upgradeable_packages_count | default(0)) == 0
+
+    - name: 顯示節點可升級套件詳細清單
+      ansible.builtin.debug:
+        msg: >-
+          ======================================================================
+          📢 [節點: {{ inventory_hostname }}] 檢測到 {{ ansible_facts.upgradeable_packages_count }} 個套件有新版本可升級:
+          ----------------------------------------------------------------------
+          {% for p in ansible_facts.upgradeable_packages %}
+          • {{ p.name }} [{{ p.current_version | default('installed') }} -> {{ p.new_version }}] ({{ p.source }}{% if p.repo is defined and p.repo != '' %} / {{ p.repo }}{% endif %})
+          {% endfor %}
+          ======================================================================
+      when: (ansible_facts.upgradeable_packages_count | default(0)) > 0
+
+    # --------------------------------------------------------------------------
+    # 3. 互動式詢問使用者是否確認升級
+    # --------------------------------------------------------------------------
+    - name: 詢問使用者是否執行升級
+      ansible.builtin.pause:
+        prompt: >-
+          [節點 {{ inventory_hostname }}] 檢測到 {{ ansible_facts.upgradeable_packages_count }} 個套件可升級。
+          是否立即對 {{ inventory_hostname }} 執行套件升級？ (輸入 'yes' 確認執行，其餘任意鍵略過):
+      register: prompt_upgrade_response
+      when:
+        - (ansible_facts.upgradeable_packages_count | default(0)) > 0
+        - not (auto_upgrade | default(false) | bool)
+
+    - name: 判斷是否執行升級
+      ansible.builtin.set_fact:
+        should_run_upgrade: >-
+          {{ (auto_upgrade | default(false) | bool) or
+             ((prompt_upgrade_response.user_input | default('')) | lower in ['yes', 'y']) }}
+      when: (ansible_facts.upgradeable_packages_count | default(0)) > 0
+
+    # --------------------------------------------------------------------------
+    # 4. 執行各作業系統原生套件升級指令
+    # --------------------------------------------------------------------------
+    - name: 檢查 Arch Linux 是否安裝 yay
+      ansible.builtin.command: which yay
+      register: yay_check
+      changed_when: false
+      failed_when: false
+      when:
+        - should_run_upgrade | default(false) | bool
+        - ansible_facts.os_family in ['Archlinux', 'ArchLinux']
+
+    - name: 執行 Arch Linux 套件升級 (yay / AUR + Official)
+      ansible.builtin.command: yay -Syu --noconfirm --needed
+      become: false
+      when:
+        - should_run_upgrade | default(false) | bool
+        - ansible_facts.os_family in ['Archlinux', 'ArchLinux']
+        - (yay_check.rc | default(1)) == 0
+
+    - name: 執行 Arch Linux 套件升級 (pacman)
+      ansible.builtin.command: pacman -Syu --noconfirm
+      become: true
+      when:
+        - should_run_upgrade | default(false) | bool
+        - ansible_facts.os_family in ['Archlinux', 'ArchLinux']
+        - (yay_check.rc | default(1)) != 0
+
+    - name: 執行 Debian / Ubuntu 套件升級 (apt)
+      ansible.builtin.apt:
+        upgrade: dist
+        update_cache: yes
+      become: true
+      when:
+        - should_run_upgrade | default(false) | bool
+        - ansible_facts.os_family == 'Debian' or ansible_facts.package_manager_detected == 'apt'
+
+    - name: 執行 Alpine Linux 套件升級 (apk)
+      ansible.builtin.command: apk upgrade --update-cache
+      become: true
+      when:
+        - should_run_upgrade | default(false) | bool
+        - ansible_facts.os_family == 'Alpine' or ansible_facts.package_manager_detected == 'apk'
+
+    - name: 執行 Photon OS 套件升級 (tdnf)
+      ansible.builtin.command: tdnf update -y
+      become: true
+      when:
+        - should_run_upgrade | default(false) | bool
+        - ansible_facts.os_family == 'VMware Photon OS' or ansible_facts.os_family == 'PhotonOS'
+
+    - name: 執行 Oracle Linux / RHEL 套件升級 (dnf)
+      ansible.builtin.command: dnf upgrade -y
+      become: true
+      when:
+        - should_run_upgrade | default(false) | bool
+        - ansible_facts.os_family in ['RedHat', 'OracleLinux', 'Rocky', 'AlmaLinux'] or ansible_facts.package_manager_detected == 'dnf'
+
+    # --------------------------------------------------------------------------
+    # 5. 輸出升級執行結果
+    # --------------------------------------------------------------------------
+    - name: 顯示升級完成摘要
+      ansible.builtin.debug:
+        msg: "🎉 [{{ inventory_hostname }}] 套件升級作業執行完成！"
+      when: should_run_upgrade | default(false) | bool

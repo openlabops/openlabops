@@ -1,0 +1,14 @@
+---
+# ==============================================================================
+# Role Defaults: docker_runtime
+# 支援外部參數/範本動態注入之 Docker 執行環境 (Data-Driven Docker Runtime Schema)
+# ==============================================================================
+docker_service_user: "{{ admin_user | default('labadmin') }}"
+docker_compose_dir_target: "{{ docker_compose_dir | default(('/home/' + docker_service_user + '/docker-compose') if (os_family | default('')) == 'PhotonOS' else '/root/docker-compose') }}"
+docker_compose_owner: "{{ docker_service_user if (os_family | default('')) == 'PhotonOS' else 'root' }}"
+docker_compose_mode: "{{ '0755' if (os_family | default('')) == 'PhotonOS' else '0700' }}"
+
+# Git Hook 控制
+docker_hook_enabled: true
+docker_hook_script_src: "{{ playbook_dir }}/../scripts/post-push-trigger.sh"
+docker_hook_script_content: ""

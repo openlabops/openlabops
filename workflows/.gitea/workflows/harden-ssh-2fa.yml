@@ -1,0 +1,36 @@
+name: Harden Admin SSH 2FA (publickey + password)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_hosts:
+        description: '目標主機或群組 (建議先單台測試，例如 gateway)'
+        required: true
+        default: 'servers'
+      admin_2fa_state:
+        description: 'present = 啟用 / absent = 回復'
+        required: true
+        default: 'present'
+
+jobs:
+  harden-ssh-2fa:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GIT_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
+
+      - name: 執行 2FA 強化劇本
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/harden-ssh-2fa.yml'
+          target_hosts: ${{ inputs.target_hosts }}
+          extra_vars: "admin_2fa_state=${{ inputs.admin_2fa_state }}"
+          key_name: 'id_user.key'
+          gitea_host: ${{ vars.GIT_HOST || 'gitea.lab' }}
+          org_name: ${{ vars.ORG_NAME || 'OpenLabOps' }}
+          token: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}

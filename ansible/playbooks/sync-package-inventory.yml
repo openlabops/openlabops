@@ -1,0 +1,134 @@
+---
+# ==============================================================================
+# Playbook: Compare and Sync Package Inventory vs Repo IaC (host_vars)
+# Target: servers (or override via --extra-vars "target_hosts=...")
+# 說明:
+#   - 採集線上節點的非相依、非系統主動安裝套件清單 (custom_package_facts)
+#   - 比對 Repo 內對應 host 的 IaC 套件清單 (host_vars/<hostname>.yml)
+#   - 精確計算漂移：哪些套件是在線上新增的 (+)，哪些是在線上已移除的 (-)
+#   - 互動詢問使用者是否將 host_vars 更新為線上現況 (支援 -e "auto_sync=true" 自動同步)
+#   - 同步更新 host_vars/<hostname>.yml 及 openlab-configs/node-information/packages_<hostname>.json
+# ==============================================================================
+
+- name: 全網節點套件清單與 Repo IaC (host_vars) 漂移比對與雙向同步
+  hosts: "{{ target_hosts | default('servers') }}"
+
+  gather_facts: true
+  become: false
+
+  vars:
+    auto_sync: false
+    configs_root: "{{ custom_configs_root | default(lookup('env', 'HOME') + '/openlab-configs') }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. 採集線上節點非相依/非系統主動安裝套件 Facts
+    # --------------------------------------------------------------------------
+    - name: 採集線上節點非相依/非系統主動安裝套件清冊
+      custom_package_facts:
+        filter_dependencies: true
+        filter_system: true
+      become: true
+      register: live_pkg_res
+
+    # --------------------------------------------------------------------------
+    # 2. 本地端執行差異比對 (Live vs host_vars IaC)
+    # --------------------------------------------------------------------------
+    - name: 比對線上主機現況與 Repo host_vars IaC 清單
+      ansible.builtin.command:
+        cmd: >-
+          {{ playbook_dir }}/../scripts/sync_host_package_vars.py
+          --host {{ inventory_hostname }}
+          --host-vars-dir {{ playbook_dir }}/../host_vars
+          --configs-dir {{ configs_root }}/node-information
+          --diff
+        stdin: "{{ {
+          'inventory_hostname': inventory_hostname,
+          'package_manager': ansible_facts['package_manager_detected'] | default('unknown'),
+          'distribution': ansible_facts['distribution'] | default('unknown'),
+          'os_family': ansible_facts['os_family'] | default('unknown'),
+          'packages': ansible_facts['explicit_packages'] | default([])
+        } | to_json }}"
+      delegate_to: localhost
+      become: false
+      register: diff_raw
+      changed_when: false
+
+    - name: 解析比對結果資料
+      ansible.builtin.set_fact:
+        diff_info: "{{ diff_raw.stdout | from_json }}"
+
+    # --------------------------------------------------------------------------
+    # 3. 輸出比對結果報告
+    # --------------------------------------------------------------------------
+    - name: 顯示一致性報告 (無漂移)
+      ansible.builtin.debug:
+        msg: "✅ [{{ inventory_hostname }}] 線上主機現況與 Repo IaC (host_vars/{{ inventory_hostname }}.yml) 完全一致 (共 {{ diff_info.live_count }} 個套件)，無漂移。"
+      when: not diff_info.has_drift
+
+    - name: 顯示 IaC 漂移警告與詳細差異清單
+      ansible.builtin.debug:
+        msg: >-
+          ======================================================================
+          ⚠️  [節點: {{ inventory_hostname }}] 檢測到 IaC 套件清單漂移 (Drift Detected)
+          ----------------------------------------------------------------------
+          線上主機套件數: {{ diff_info.live_count }} | Repo IaC 登記數: {{ diff_info.repo_count }}
+          {% if diff_info.added | length > 0 %}
+          + 線上新增 (Repo 未登記，需補入 IaC): {{ diff_info.added | length }} 個
+          {% for p in diff_info.added %}  + {{ p }}
+          {% endfor %}
+          {% endif %}
+          {% if diff_info.removed | length > 0 %}
+          - 線上已移除 (Repo 有登記，需從 IaC 剔除): {{ diff_info.removed | length }} 個
+          {% for p in diff_info.removed %}  - {{ p }}
+          {% endfor %}
+          {% endif %}
+          ======================================================================
+      when: diff_info.has_drift
+
+    # --------------------------------------------------------------------------
+    # 4. 互動式詢問使用者是否更新 Repo IaC 清單
+    # --------------------------------------------------------------------------
+    - name: 詢問使用者是否更新 Repo IaC 清單為現狀
+      ansible.builtin.pause:
+        prompt: >-
+          [節點 {{ inventory_hostname }}] 與 Repo IaC 存在差異。
+          是否將 ansible 對應 host 的 package list (host_vars/{{ inventory_hostname }}.yml) 更新成現狀？ (輸入 'yes' 確認同步，其餘任意鍵略過):
+      register: prompt_sync_response
+      when:
+        - diff_info.has_drift
+        - not (auto_sync | default(false) | bool)
+
+    - name: 判斷是否執行 IaC 同步
+      ansible.builtin.set_fact:
+        should_sync_iac: >-
+          {{ (auto_sync | default(false) | bool) or
+             ((prompt_sync_response.user_input | default('')) | lower in ['yes', 'y']) }}
+      when: diff_info.has_drift
+
+    # --------------------------------------------------------------------------
+    # 5. 執行同步寫入 (host_vars 及 openlab-configs)
+    # --------------------------------------------------------------------------
+    - name: 執行 host_vars 及 node-information 套件清冊同步寫入
+      ansible.builtin.command:
+        cmd: >-
+          {{ playbook_dir }}/../scripts/sync_host_package_vars.py
+          --host {{ inventory_hostname }}
+          --host-vars-dir {{ playbook_dir }}/../host_vars
+          --configs-dir {{ configs_root }}/node-information
+          --apply
+        stdin: "{{ {
+          'inventory_hostname': inventory_hostname,
+          'package_manager': ansible_facts['package_manager_detected'] | default('unknown'),
+          'distribution': ansible_facts['distribution'] | default('unknown'),
+          'os_family': ansible_facts['os_family'] | default('unknown'),
+          'packages': ansible_facts['explicit_packages'] | default([])
+        } | to_json }}"
+      delegate_to: localhost
+      become: false
+      when: should_sync_iac | default(false) | bool
+
+    - name: 顯示同步完成通知
+      ansible.builtin.debug:
+        msg: "🎉 [{{ inventory_hostname }}] 已成功將套件清單更新至 host_vars/{{ inventory_hostname }}.yml 及 node-information/packages_{{ inventory_hostname }}.json！"
+      when: should_sync_iac | default(false) | bool

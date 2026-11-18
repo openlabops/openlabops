@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# OpenLabOps Developer & AI Agent Environment Setup Entrypoint
+# File: bin/lab-dev-setup / bin/lab-dev-setup
+# Usage:
+#   ./bin/lab-dev-setup [OPTIONS] [ANSIBLE_EXTRA_FLAGS...]
+#
+# Options:
+#   --check, -c    Dry-run check without applying changes
+#   --force, -f    Force recreate .venv and re-bootstrap toolchain
+#   --help, -h     Display this help message
+# ==============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+PLAYBOOK="${REPO_ROOT}/ansible/playbooks/dev-environment.yml"
+PROJECT_NAME="$(basename "${REPO_ROOT}")"
+
+CHECK_MODE="false"
+FORCE_RECREATE="false"
+FORWARD_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --check|-c)
+            CHECK_MODE="true"
+            FORWARD_ARGS+=("--check")
+            shift
+            ;;
+        --force|-f)
+            FORCE_RECREATE="true"
+            shift
+            ;;
+        --version|-v)
+            VER="$(tr -d '[:space:]' < "${REPO_ROOT}/VERSION" 2>/dev/null || echo "1.0.0")"
+            echo "OpenLabOps Developer Workspace Setup (lab-dev-setup) v${VER}"
+            exit 0
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS] [ANSIBLE_FLAGS...]"
+            echo ""
+            echo "Options:"
+            echo "  --check, -c    Dry-run check for required toolchains and exit"
+            echo "  --force, -f    Force recreate .venv and re-bootstrap toolchains"
+            echo "  --version, -v  Display version information"
+            echo "  --help, -h     Display this help message"
+            exit 0
+            ;;
+        *)
+            FORWARD_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+
+echo "================================================================================"
+echo "  [${PROJECT_NAME}] Developer & AI Agent Workspace Environment Setup"
+echo "  Target: Local workstation toolchain (Python 3.10+, Ansible, CUE, Docker, Hooks)"
+echo "================================================================================"
+
+if [[ "${FORCE_RECREATE}" == "true" ]]; then
+    echo "  [•] Force flag detected: Recreating isolated .venv ..."
+    rm -rf "${REPO_ROOT}/.venv"
+fi
+
+if command -v ansible-playbook >/dev/null 2>&1 && [[ "${FORCE_RECREATE}" != "true" ]]; then
+    echo "  [✓] Native Ansible detected: $(command -v ansible-playbook)"
+    echo "  [•] Executing declarative environment playbook: ${PLAYBOOK}"
+    exec ansible-playbook "${PLAYBOOK}" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
+else
+    if [ ! -d "${REPO_ROOT}/.venv" ]; then
+        echo "  [•] Bootstrapping isolated developer venv at ${REPO_ROOT}/.venv ..."
+        python3 -m venv "${REPO_ROOT}/.venv"
+        echo "  [•] Installing ansible-core in local .venv ..."
+        "${REPO_ROOT}/.venv/bin/pip" install --quiet --upgrade pip ansible-core
+    fi
+    echo "  [•] Executing declarative environment playbook via .venv ..."
+    exec "${REPO_ROOT}/.venv/bin/ansible-playbook" "${PLAYBOOK}" ${FORWARD_ARGS[@]+"${FORWARD_ARGS[@]}"}
+fi

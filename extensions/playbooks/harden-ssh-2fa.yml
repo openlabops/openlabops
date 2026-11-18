@@ -1,0 +1,70 @@
+---
+# ==============================================================================
+# Playbook: SSH Two-Factor Authentication (Public Key + Password)
+# Target Hosts: servers (override via --extra-vars "target_hosts=...")
+# Neutralized for OpenLabOps / OpenLabOps Operations Engine
+# ==============================================================================
+- name: "系統管理員帳號 SSH 公鑰 + 密碼雙重認證 (Harden SSH 2FA)"
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: true
+  become: true
+
+  vars:
+    target_account: "{{ admin_user | default('labadmin') }}"
+    automation_account: "{{ ansible_user | default('lab') }}"
+    admin_2fa_state: "{{ lab_2fa_state | default('present') }}"
+    sshd_config_path: /etc/ssh/sshd_config
+    sshd_bin: /usr/sbin/sshd
+
+  tasks:
+    - name: 防呆 - 禁止對自動化運維帳號套用密碼雙認證
+      ansible.builtin.assert:
+        that: target_account != automation_account
+        fail_msg: "{{ automation_account }} 為自動化運維帳號，不可套用密碼雙重認證。"
+
+    - name: 讀取管理員密碼雜湊欄位 (Linux)
+      ansible.builtin.shell: "getent shadow {{ target_account }} | cut -d: -f2"
+      register: pw_hash_linux
+      changed_when: false
+      when: ansible_facts.system == 'Linux'
+
+    - name: 確認管理員帳號已設定可用密碼 (避免鎖死)
+      ansible.builtin.assert:
+        that:
+          - admin_pw_hash | length > 1
+          - not admin_pw_hash.startswith('!')
+          - not admin_pw_hash.startswith('*')
+        fail_msg: >-
+          {{ inventory_hostname }}: {{ target_account }} 帳號未設定密碼或已鎖定，
+          請先執行 `sudo passwd {{ target_account }}` 再套用。
+        quiet: true
+      vars:
+        admin_pw_hash: "{{ pw_hash_linux.stdout | default('') }}"
+      when: admin_2fa_state == 'present'
+
+    - name: 寫入 / 移除 Match User 雙重認證區塊 (以 sshd -t 驗證)
+      ansible.builtin.blockinfile:
+        path: "{{ sshd_config_path }}"
+        marker: "# {mark} ANSIBLE MANAGED: {{ target_account }} ssh 2fa"
+        insertafter: EOF
+        backup: true
+        state: "{{ admin_2fa_state }}"
+        validate: "{{ sshd_bin }} -t -f %s"
+        block: |
+          Match User {{ target_account }}
+              PasswordAuthentication yes
+              AuthenticationMethods publickey,password
+      notify: Reload sshd
+
+  handlers:
+    - name: Reload sshd
+      ansible.builtin.service:
+        name: sshd
+        state: reloaded
+
+- name: 驗證自動化救援通道仍然可用
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: false
+  tasks:
+    - name: 以自動化帳號重新連線測試
+      ansible.builtin.ping:

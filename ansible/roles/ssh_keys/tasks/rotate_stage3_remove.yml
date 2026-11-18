@@ -1,0 +1,11 @@
+---
+# ==============================================================================
+# Task: rotate_stage3_remove.yml
+# 金鑰輪換 Stage 3: 安全移除舊 SSH 公鑰
+# ==============================================================================
+- name: 從 authorized_keys 移除舊 SSH 公鑰
+  ansible.posix.authorized_key:
+    user: "{{ ssh_keys_rotate_user }}"
+    state: absent
+    key: "{{ ssh_keys_rotate_old_pub_key }}"
+  when: ssh_keys_rotate_old_pub_key is defined and ssh_keys_rotate_old_pub_key | length > 0

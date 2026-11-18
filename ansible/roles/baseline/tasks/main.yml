@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# Role Tasks: baseline
+# 跨平台 (Linux/BSD) 系統基線、時區、共通套件與 SSHD 運行保證
+# ==============================================================================
+
+- name: "[Baseline] 執行 Python 直譯器安裝保證 (Raw Bootstrap)"
+  ansible.builtin.include_tasks: python_raw.yml
+  when: baseline_bootstrap_python | bool
+
+- name: "[Baseline] 設定系統時區與時間環境"
+  ansible.builtin.include_tasks: timezone.yml
+  when: baseline_manage_timezone | bool
+
+- name: "[Baseline] 安裝系統通用基礎套件"
+  ansible.builtin.include_tasks: packages.yml
+  when: baseline_manage_packages | bool
+
+- name: "[Baseline] 保證 SSH 守護行程開機啟用與運行"
+  ansible.builtin.include_tasks: sshd.yml
+  when: baseline_manage_sshd | bool
+
+- name: "[Baseline] 配置管理者 SSH 雙重認證 (2FA Match User)"
+  ansible.builtin.include_tasks: sshd_2fa.yml
+  when: baseline_manage_sshd_2fa | default(false) | bool
+

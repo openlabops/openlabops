@@ -1,0 +1,54 @@
+name: OpenLabOps CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run Python syntax check
+        run: |
+          python3 -m compileall -q engine tools tests bin
+
+      - name: Run Bash syntax check
+        run: |
+          find . -path ./.git -prune -o -type f -name '*.sh' -print0 | xargs -0 -n1 bash -n
+
+      - name: Run unit tests
+        run: |
+          python3 -m unittest discover -s tests/unit -v
+
+      - name: CLI --version & --help smoke checks
+        run: |
+          for cmd in bin/lab-apply bin/lab-boot-sync bin/lab-config bin/lab-dev-setup bin/lab-diff bin/lab-discover bin/lab-init bin/lab-man bin/lab-node bin/lab-test tools/bin/lab-tools tools/bin/lab-status tools/bin/lab-backup tools/bin/lab-info tools/bin/lab-setup tools/bin/lab-ssh tools/bin/lab-upgrade tools/bin/render-node-doc; do
+            ./"$cmd" --version
+            ./"$cmd" --help >/dev/null
+          done
+
+      - name: Set up CUE & validate schemas
+        uses: cue-lang/setup-cue@v1.0.1
+        with:
+          version: v0.10.1
+      - name: Run CUE schema vet
+        run: cue vet schema/*.cue
+
+      - name: Install Ansible & run playbook syntax check
+        env:
+          ANSIBLE_CONFIG: ansible/ansible.cfg
+        run: |
+          python3 -m pip install --upgrade pip ansible-core
+          for pb in ansible/playbooks/*.yml; do
+            ansible-playbook -i "localhost," --syntax-check "$pb"
+          done

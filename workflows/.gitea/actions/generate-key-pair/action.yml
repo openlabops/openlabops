@@ -1,0 +1,52 @@
+name: "Generate SSH Key Pair"
+description: "Generates a clean OpenSSH key pair with specified type and comment for key rotation pipelines"
+inputs:
+  key_type:
+    description: "Key type (e.g., ed25519, rsa)"
+    required: false
+    default: "ed25519"
+  key_bits:
+    description: "Key bits (for RSA, e.g. 4096)"
+    required: false
+    default: "4096"
+  dest_dir:
+    description: "Destination directory to place keys"
+    required: false
+    default: "/tmp/ssh_rotation"
+  key_name:
+    description: "Base name of key (without extension, will produce $key_name.key and $key_name.pub)"
+    required: true
+  comment:
+    description: "Comment string on public key"
+    required: false
+    default: "automated-rotation"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Generate SSH Key
+      shell: sh
+      env:
+        DEST_DIR: ${{ inputs.dest_dir }}
+        KEY_NAME: ${{ inputs.key_name }}
+        KEY_TYPE: ${{ inputs.key_type }}
+        BITS: ${{ inputs.key_bits }}
+        COMMENT: ${{ inputs.comment }}
+      run: |
+
+        mkdir -p "$DEST_DIR"
+        TEMP_KEY="${DEST_DIR}/${KEY_NAME}_raw"
+
+        echo "🔐 [Action: generate-key-pair] Generating ${KEY_TYPE} key: ${KEY_NAME} in ${DEST_DIR}..."
+        if [ "$KEY_TYPE" = "rsa" ]; then
+          ssh-keygen -t "$KEY_TYPE" -b "$BITS" -N "" -C "$COMMENT" -f "$TEMP_KEY" >/dev/null 2>&1
+        else
+          ssh-keygen -t "$KEY_TYPE" -N "" -C "$COMMENT" -f "$TEMP_KEY" >/dev/null 2>&1
+        fi
+
+        mv -f "$TEMP_KEY" "${DEST_DIR}/${KEY_NAME}.key"
+        mv -f "${TEMP_KEY}.pub" "${DEST_DIR}/${KEY_NAME}.pub"
+        chmod 600 "${DEST_DIR}/${KEY_NAME}.key"
+        chmod 644 "${DEST_DIR}/${KEY_NAME}.pub"
+
+        echo "  [✓] Key pair generated: ${DEST_DIR}/${KEY_NAME}.key and .pub"

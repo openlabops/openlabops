@@ -1,0 +1,81 @@
+---
+# ==============================================================================
+# Task: manage_host_key.yml
+# 單一端點/客戶端 SSH 公鑰部署或撤銷 (deploy_host_key / revoke_host_key)
+# ==============================================================================
+- name: 防呆檢查 - 端點名稱必須指定
+  ansible.builtin.assert:
+    that:
+      - ssh_keys_target_endpoint is defined
+      - ssh_keys_target_endpoint | length > 0
+    fail_msg: "必須指定 ssh_keys_target_endpoint (例如: workstation, laptop, desktop)！"
+
+- name: 依優先順序探測端點公鑰檔案
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ ssh_keys_endpoint_pub_path | default('/nonexistent') }}"
+    - "{{ lookup('env', 'HOME') + '/.ssh/' + ssh_keys_target_endpoint + '.pub' }}"
+    - "/tmp/openlab-secrets/ssh-key/{{ ssh_keys_target_endpoint }}.pub"
+    - "{{ resolved_secrets_dir }}/ssh-key/{{ ssh_keys_target_endpoint }}.pub"
+  register: host_pub_candidates
+
+- name: 確定端點公鑰可用路徑
+  ansible.builtin.set_fact:
+    resolved_host_pub_path: "{{ (host_pub_candidates.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+- name: 讀取端點公鑰內容
+  ansible.builtin.slurp:
+    src: "{{ resolved_host_pub_path }}"
+  delegate_to: localhost
+  become: false
+  register: host_pub_b64
+  when: resolved_host_pub_path != ''
+
+# ------------------------------------------------------------------------------
+# 部署 (manage_state == 'present')
+# ------------------------------------------------------------------------------
+- name: 部署端點公鑰至 {{ ssh_keys_endpoint_target_user }} authorized_keys
+  ansible.posix.authorized_key:
+    user: "{{ ssh_keys_endpoint_target_user }}"
+    key: "{{ host_pub_b64.content | b64decode | trim }}"
+    key_options: "{{ ssh_keys_endpoint_options if (ssh_keys_endpoint_options | length > 0) else omit if (ssh_keys_endpoint_options == '') else ssh_keys_endpoint_default_cidrs }}"
+    state: present
+    exclusive: false
+    comment: "{{ ssh_keys_target_endpoint }}-client"
+  when: manage_state == 'present' and resolved_host_pub_path != ''
+  become: true
+  register: deploy_host_key_res
+
+# ------------------------------------------------------------------------------
+# 撤銷 (manage_state == 'absent')
+# ------------------------------------------------------------------------------
+- name: 從 authorized_keys 移除該端點公鑰 (依內容比對)
+  ansible.posix.authorized_key:
+    user: "{{ ssh_keys_endpoint_target_user }}"
+    key: "{{ host_pub_b64.content | b64decode | trim }}"
+    state: absent
+  when: manage_state == 'absent' and resolved_host_pub_path != '' and (host_pub_b64.content is defined)
+  become: true
+  register: revoke_by_key_res
+
+- name: 雙重防護：清除任何帶有 {{ ssh_keys_target_endpoint }}-client 註解之公鑰條目
+  ansible.builtin.lineinfile:
+    path: "~{{ ssh_keys_endpoint_target_user }}/.ssh/authorized_keys"
+    regexp: '.*[#\s]+{{ ssh_keys_target_endpoint }}-client(\s.*)?$'
+    state: absent
+  when: manage_state == 'absent'
+  become: true
+  register: revoke_by_comment_res
+
+- name: 顯示操作結果摘要
+  ansible.builtin.debug:
+    msg: >-
+      Host {{ inventory_hostname }} ({{ ansible_host }}):
+      {% if manage_state == 'present' %}
+      {{ ssh_keys_target_endpoint + '.pub 部署成功至 ' + ssh_keys_endpoint_target_user if (deploy_host_key_res is defined and deploy_host_key_res.changed) else ssh_keys_target_endpoint + '.pub 已存在' if (resolved_host_pub_path != '') else '略過: 找不到公鑰檔案 ' + ssh_keys_target_endpoint }}
+      {% else %}
+      {{ ssh_keys_target_endpoint + ' 公鑰已自 ' + ssh_keys_endpoint_target_user + ' 撤銷清除' }}
+      {% endif %}

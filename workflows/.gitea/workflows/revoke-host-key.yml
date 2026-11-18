@@ -1,0 +1,58 @@
+name: Revoke Generic Host SSH Key Workflow ($hostname.pub)
+
+on:
+  workflow_dispatch:
+    inputs:
+      host_name:
+        description: 'Endpoint Host Name to revoke (e.g., workstation, laptop, desktop)'
+        required: true
+      purge_secrets:
+        description: 'Purge public key file from secrets repository? (true/false)'
+        required: false
+        default: 'true'
+
+jobs:
+  revoke-host-key:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GIT_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
+
+      - name: 執行金鑰撤銷劇本
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/revoke-host-key.yml'
+          extra_vars: "host_name=${{ inputs.host_name }} host_pub_key_path=/tmp/openlab-secrets/ssh-key/${{ inputs.host_name }}.pub"
+          key_name: 'ansible.key'
+          gitea_host: ${{ vars.GIT_HOST || 'gitea.lab' }}
+          org_name: ${{ vars.ORG_NAME || 'OpenLabOps' }}
+          token: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}
+
+      - name: 若指定清除倉庫記錄，自 Secrets 移除並提交
+        if: ${{ inputs.purge_secrets == 'true' }}
+        shell: sh
+        env:
+          HOST_NAME: ${{ inputs.host_name }}
+        run: |
+          if ! echo "$HOST_NAME" | grep -Eq '^[a-zA-Z0-9._-]+$'; then
+            echo "Error: Invalid host_name '$HOST_NAME'" >&2
+            exit 1
+          fi
+          if [ -f "/tmp/openlab-secrets/ssh-key/${HOST_NAME}.pub" ]; then
+            cd /tmp/openlab-secrets
+            git rm -f "ssh-key/${HOST_NAME}.pub"
+          fi
+
+      - name: 提交刪除變更至 Secrets
+        if: ${{ inputs.purge_secrets == 'true' }}
+        uses: ./.gitea/actions/git-sync-commit
+        with:
+          target_dir: '/tmp/openlab-secrets'
+          commit_msg: "feat(ssh): revoke and remove endpoint ${{ inputs.host_name }}.pub"
+          author_name: 'ci-bot'
+          author_email: 'ci-bot@lab'

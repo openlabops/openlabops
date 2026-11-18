@@ -1,0 +1,31 @@
+---
+# ==============================================================================
+# Playbook: Pull Latest Docker Compose Repository on PhotonOS & OCI
+# Target:
+#   - photonos hosts: /home/labadmin/docker-compose
+#   - server hosts
+# ==============================================================================
+- name: Git Pull Docker Compose on Managed Servers
+  hosts: servers
+  gather_facts: false
+
+  tasks:
+    - name: 檢查目標 docker-compose 目錄是否存在
+      ansible.builtin.stat:
+        path: "{{ docker_compose_dir }}"
+      register: compose_dir_stat
+
+    - name: 執行 git pull 更新 docker-compose 倉庫
+      ansible.builtin.command: git pull origin main
+      args:
+        chdir: "{{ docker_compose_dir }}"
+      when: compose_dir_stat.stat.exists
+      register: git_pull_res
+      changed_when: "'Already up to date.' not in git_pull_res.stdout"
+      become: "{{ true if os_family == 'OracleLinux' else false }}"
+
+    - name: 輸出 Git Pull 執行結果
+      ansible.builtin.debug:
+        msg: >-
+          Host {{ inventory_hostname }} ({{ ansible_host }} | {{ os_family }}):
+          {{ git_pull_res.stdout if compose_dir_stat.stat.exists else 'Directory ' + docker_compose_dir + ' does not exist' }}

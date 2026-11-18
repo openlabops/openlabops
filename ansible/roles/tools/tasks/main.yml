@@ -1,0 +1,213 @@
+---
+# ==============================================================================
+# Role Tasks: tools
+# 在目標節點安裝、升級與配置命令列維運工具鏈
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. 確保目標節點基礎依賴就緒 (全發行版支援)
+# ------------------------------------------------------------------------------
+- name: 確保 Arch Linux 基礎套件就緒
+  ansible.builtin.pacman:
+    name: [python, git, curl, rsync]
+    state: present
+    update_cache: yes
+  when: (os_family | default('')) == 'ArchLinux' or (ansible_facts.os_family | default('')) in ['Archlinux', 'ArchLinux']
+
+- name: 確保 Debian / Ubuntu 基礎套件就緒
+  ansible.builtin.apt:
+    name: [python3, git, curl, rsync]
+    state: present
+    update_cache: yes
+  when: (ansible_facts.os_family | default('')) == 'Debian'
+
+- name: 確保 RedHat / Oracle Linux 基礎套件就緒
+  ansible.builtin.dnf:
+    name: [python3, git, curl, rsync]
+    state: present
+  when: (os_family | default('')) == 'OracleLinux' or (ansible_facts.os_family | default('')) in ['RedHat', 'Rocky', 'AlmaLinux']
+
+- name: 確保 Photon OS 基礎套件就緒
+  ansible.builtin.package:
+    name: [python3, git, curl, rsync]
+    state: present
+  when: (os_family | default('')) == 'PhotonOS' or (ansible_facts.os_family | default('')) in ['PhotonOS', 'VMware Photon OS']
+
+- name: 確保 Alpine Linux 基礎套件就緒
+  community.general.apk:
+    name: [python3, git, curl, rsync]
+    state: present
+    update_cache: yes
+  when: (os_family | default('')) == 'Alpine' or (ansible_facts.os_family | default('')) == 'Alpine'
+  failed_when: false
+
+# ------------------------------------------------------------------------------
+# 2. 建立標準系統目錄結構
+# ------------------------------------------------------------------------------
+- name: 建立工具鏈根目錄 ({{ tools_install_dir }})
+  ansible.builtin.file:
+    path: "{{ tools_install_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+- name: 建立 Token 與私密配置目錄 ({{ token_config_dir }})
+  ansible.builtin.file:
+    path: "{{ token_config_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+
+# ------------------------------------------------------------------------------
+# 3. 部署工具代碼庫 (優先從控制端 / Runner 同步，備選自 Gitea 檢出)
+# ------------------------------------------------------------------------------
+- name: 探測控制端 (Runner) 是否具備 openlab-tools 代碼
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop: "{{ control_tools_candidates }}"
+  register: control_tools_stats
+
+- name: 確定控制端可用代碼路徑
+  ansible.builtin.set_fact:
+    resolved_control_tools: "{{ tools_source_path if (tools_source_path | default('')) != '' else ((control_tools_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('')) }}"
+
+- name: 從控制端同步 openlab-tools 代碼至目標節點
+  ansible.posix.synchronize:
+    src: "{{ resolved_control_tools }}/"
+    dest: "{{ tools_install_dir }}/"
+    delete: no
+    rsync_opts:
+      - "--exclude=.git"
+      - "--exclude=__pycache__"
+      - "--exclude=*.pyc"
+  when: resolved_control_tools != ''
+
+- name: 若控制端無代碼，自 Gitea 檢出 openlab-tools
+  ansible.builtin.git:
+    repo: "{{ tools_git_repo }}"
+    dest: "{{ tools_install_dir }}"
+    version: main
+    force: yes
+  when: resolved_control_tools == ''
+
+- name: 探測控制端是否具備 engine、lang 與 docs 目錄
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/../../{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "engine"
+    - "lang"
+    - "docs"
+  register: control_extra_stats
+
+- name: 同步控制端 engine、lang 與 docs 目錄至目標節點 ({{ tools_install_dir }})
+  ansible.posix.synchronize:
+    src: "{{ item.item }}/"
+    dest: "{{ tools_install_dir }}/{{ item.item | basename }}/"
+    delete: no
+    rsync_opts:
+      - "--exclude=__pycache__"
+      - "--exclude=*.pyc"
+  loop: "{{ control_extra_stats.results }}"
+  when: item.stat.exists | default(false)
+
+# ------------------------------------------------------------------------------
+# 4. 權限標準化 (確保一般使用者與 root 皆可無障礙執行)
+# ------------------------------------------------------------------------------
+- name: 確保 VERSION 檔案具備全域唯讀權限 (0644)
+  ansible.builtin.file:
+    path: "{{ tools_install_dir }}/VERSION"
+    mode: '0644'
+    owner: root
+    group: root
+  failed_when: false
+
+- name: 批次確保 bin、lib、engine、lang、docs 與 conf 目錄具備標準執行與讀取權限 (0755)
+  ansible.builtin.file:
+    path: "{{ tools_install_dir }}/{{ item }}"
+    mode: '0755'
+    owner: root
+    group: root
+    recurse: yes
+  loop:
+    - "bin"
+    - "lib"
+    - "engine"
+    - "lang"
+    - "docs"
+    - "conf"
+  failed_when: false
+
+- name: AOT 預編譯 Python Bytecode 至 __pycache__ (消除非 root 執行期編譯延遲)
+  ansible.builtin.command: "{{ ansible_playbook_python | default('python3') }} -m compileall -f -q {{ tools_install_dir }}/lib"
+  changed_when: false
+  failed_when: false
+
+- name: 確保預編譯之 .pyc 具備全域唯讀權限 (0644)
+  ansible.builtin.shell: |
+    find {{ tools_install_dir }}/lib -name "*.pyc" -exec chmod 0644 {} +
+  changed_when: false
+  failed_when: false
+
+# ------------------------------------------------------------------------------
+# 5. 建立標準 CLI 軟連結至 /usr/local/bin/ 與開機自癒服務
+# ------------------------------------------------------------------------------
+- name: 建立 CLI 軟連結至 {{ bin_symlink_dir }}
+  ansible.builtin.file:
+    src: "{{ tools_install_dir }}/{{ item.src }}"
+    dest: "{{ bin_symlink_dir }}/{{ item.dest }}"
+    state: link
+    force: yes
+  loop: "{{ cli_symlinks }}"
+
+  ansible.builtin.copy:
+    owner: root
+    group: root
+    mode: '0644'
+    content: |
+      [Unit]
+      Description=OpenLabOps Non-7/24 Node Boot Public Key Synchronizer
+      Documentation=https://github.com/openlab/openlabops
+      After=network-online.target
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      RemainAfterExit=yes
+      StandardOutput=journal
+      StandardError=journal
+      TimeoutStartSec=60
+
+      [Install]
+      WantedBy=multi-user.target
+  when: (ansible_facts.service_mgr | default('')) == 'systemd'
+  failed_when: false
+
+  ansible.builtin.systemd:
+    daemon_reload: yes
+    enabled: yes
+  when: (ansible_facts.service_mgr | default('')) == 'systemd'
+  failed_when: false
+
+# ------------------------------------------------------------------------------
+# 6. 清理舊版廢棄軟連結與歷史目錄
+# ------------------------------------------------------------------------------
+- name: 清理舊版廢棄軟連結與歷史目錄
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: absent
+  loop: "{{ legacy_cleanup }}"
+  failed_when: false
+
+# ------------------------------------------------------------------------------
+# 7. 節點安裝驗證
+# ------------------------------------------------------------------------------
+- name: 執行 lab-status -v 驗證安裝結果
+  ansible.builtin.command: "{{ bin_symlink_dir }}/lab-status -v"
+  register: lab_tools_ver_res
+  changed_when: false

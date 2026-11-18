@@ -1,0 +1,140 @@
+---
+# ==============================================================================
+# Shell 配置部署 (泛型發行版與自訂參數注入支援)
+# 消除寫死之使用者名稱與全域別名，支援外部範本精確注入
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. 解析目標 Shell 種類與副檔名
+# ------------------------------------------------------------------------------
+- name: 確定目標節點之 Shell 類型
+  ansible.builtin.set_fact:
+    active_shell_type: >-
+      {{ dotfiles_shell_type if (dotfiles_shell_type | default('')) != ''
+         else 'zsh' if ((os_family | default('')) == 'ArchLinux' or (ansible_facts.os_family | default('')) in ['Archlinux', 'ArchLinux'])
+         else 'bash' }}
+
+- name: 確定 Shell 擴充檔名
+  ansible.builtin.set_fact:
+    active_shell_ext: >-
+      {{ 'cshrc' if active_shell_type == 'csh'
+         else 'zshrc' if active_shell_type == 'zsh'
+         else 'bashrc' }}
+
+# ------------------------------------------------------------------------------
+# 2. 解析來源檔案路徑 (優先使用外部注入變數，備選探測 configs 目錄)
+# ------------------------------------------------------------------------------
+- name: 探測主機專屬 rc 候選檔案路徑
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ dotfiles_host_shellrc_src | default('/nonexistent') }}"
+    - "{{ resolved_configs }}/shell/{{ inventory_hostname }}.{{ active_shell_ext }}"
+  register: host_shell_candidates
+
+- name: 確定主機專屬 rc 實際來源路徑
+  ansible.builtin.set_fact:
+    resolved_host_shell_src: "{{ (host_shell_candidates.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+- name: 確定系統全域 rc 來源路徑
+  ansible.builtin.set_fact:
+    resolved_global_shell_src: "{{ dotfiles_global_shellrc_src if (dotfiles_global_shellrc_src | default('')) != '' else resolved_configs + '/shell/' + dotfiles_global_rc_name + '.' + active_shell_ext }}"
+
+# ------------------------------------------------------------------------------
+# 3. 部署全域與使用者組態 (依 active_shell_type 分發)
+# ------------------------------------------------------------------------------
+
+# --- 3.1 BASH ---
+- name: "[Bash] 確保 /etc/bash 目錄存在"
+  ansible.builtin.file:
+    path: /etc/bash
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: active_shell_type == 'bash'
+
+- name: "[Bash] 部署全域基底 (/etc/bash/bashrc.{{ dotfiles_global_rc_name }})"
+  ansible.builtin.copy:
+    src: "{{ resolved_global_shell_src }}"
+    dest: "/etc/bash/bashrc.{{ dotfiles_global_rc_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: active_shell_type == 'bash'
+
+- name: "[Bash] 建立相容軟連結 /etc/bash.{{ dotfiles_global_rc_name }}"
+  ansible.builtin.file:
+    src: "/etc/bash/bashrc.{{ dotfiles_global_rc_name }}"
+    dest: "/etc/bash.{{ dotfiles_global_rc_name }}"
+    state: link
+    force: true
+  when: active_shell_type == 'bash'
+
+- name: "[Bash] 部署主機特化 ~/.bashrc 至 {{ dotfiles_target_home }}/.bashrc"
+  ansible.builtin.copy:
+    src: "{{ resolved_host_shell_src }}"
+    dest: "{{ dotfiles_target_home }}/.bashrc"
+    owner: "{{ dotfiles_target_user }}"
+    mode: '0644'
+  when:
+    - active_shell_type == 'bash'
+    - target_user_home_stat.stat.exists
+    - resolved_host_shell_src != ''
+
+- name: "[Bash] 部署主機特化組態至 /root/.bashrc"
+  ansible.builtin.copy:
+    src: "{{ resolved_host_shell_src }}"
+    dest: /root/.bashrc
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - active_shell_type == 'bash'
+    - dotfiles_manage_root_dotfiles | bool
+    - resolved_host_shell_src != ''
+
+# --- 3.2 ZSH ---
+- name: "[Zsh] 確保 /etc/zsh 目錄存在"
+  ansible.builtin.file:
+    path: /etc/zsh
+    state: directory
+    owner: root
+    group: root
+    mode: '0755'
+  when: active_shell_type == 'zsh'
+
+- name: "[Zsh] 部署全域基底 (/etc/zsh/zshrc.{{ dotfiles_global_rc_name }})"
+  ansible.builtin.copy:
+    src: "{{ resolved_global_shell_src }}"
+    dest: "/etc/zsh/zshrc.{{ dotfiles_global_rc_name }}"
+    owner: root
+    group: root
+    mode: '0644'
+  when: active_shell_type == 'zsh'
+
+- name: "[Zsh] 部署主機特化 ~/.zshrc 至 {{ dotfiles_target_home }}/.zshrc"
+  ansible.builtin.copy:
+    src: "{{ resolved_host_shell_src }}"
+    dest: "{{ dotfiles_target_home }}/.zshrc"
+    owner: "{{ dotfiles_target_user }}"
+    mode: '0644'
+  when:
+    - active_shell_type == 'zsh'
+    - target_user_home_stat.stat.exists
+    - resolved_host_shell_src != ''
+
+- name: "[Zsh] 部署主機特化 ~/.zshrc 至 /root/.zshrc"
+  ansible.builtin.copy:
+    src: "{{ resolved_host_shell_src }}"
+    dest: /root/.zshrc
+    owner: root
+    group: root
+    mode: '0644'
+  when:
+    - active_shell_type == 'zsh'
+    - dotfiles_manage_root_dotfiles | bool
+    - resolved_host_shell_src != ''
+

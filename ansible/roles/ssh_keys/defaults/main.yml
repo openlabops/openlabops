@@ -1,0 +1,58 @@
+---
+# ==============================================================================
+# Role Defaults: ssh_keys
+# 支援外部參數/範本動態注入之 SSH 金鑰生命週期管理配置 (Data-Driven SSH Keys Schema)
+# ==============================================================================
+# 控制端本地庫路徑探測 (支援環境變數 HOME，避免硬編碼)
+ssh_keys_secrets_dir: "{{ custom_secrets_dir | default(lookup('env', 'HOME') + '/openlab-secrets') }}"
+ssh_keys_configs_dir: "{{ custom_configs_dir | default(lookup('env', 'HOME') + '/openlab-configs') }}"
+
+control_secrets_candidates:
+  - "{{ ssh_keys_secrets_dir }}"
+  - "/tmp/openlab-secrets"
+  - "{{ lookup('env', 'HOME') }}/openlab-secrets"
+
+control_configs_candidates:
+  - "{{ ssh_keys_configs_dir }}"
+  - "/tmp/openlab-configs"
+  - "{{ lookup('env', 'HOME') }}/openlab-configs"
+
+# 叢集帳號與金鑰名稱 (繼承 group_vars/all.yml 或外部注入)
+ssh_keys_automation_user: "{{ ansible_user | default('lab') }}"
+ssh_keys_admin_user: "{{ admin_user | default('labadmin') }}"
+ssh_keys_admin_key_name: "{{ admin_key_name | default('openlab') }}"
+ssh_keys_automation_key_name: "{{ automation_key_name | default('lab') }}"
+
+# 網段存取選項 (嚴格對齊 pf.conf 與 group_vars/all.yml)
+ssh_keys_automation_options: "{{ ansible_key_options | default('from=\"192.168.1.0/24\"') }}"
+ssh_keys_admin_options: "{{ user_key_options | default('from=\"192.168.1.0/24\"') }}"
+ssh_keys_endpoint_options: "{{ endpoint_key_options | default('') }}"
+ssh_keys_endpoint_default_cidrs: 'from="192.168.1.0/24"'
+
+# 目標節點管理端金鑰庫 (Client Identity Files)
+ssh_keys_managed_client_keys:
+  - "{{ ssh_keys_admin_key_name }}.key"
+  - "{{ ssh_keys_admin_key_name }}.pub"
+  - "{{ ssh_keys_automation_key_name }}.key"
+  - "{{ ssh_keys_automation_key_name }}.pub"
+  - "git-{{ ssh_keys_admin_key_name }}.key"
+  - "git-{{ ssh_keys_admin_key_name }}.pub"
+
+# 部署動作與開關
+ssh_keys_action: "deploy_node"  # 可選: deploy_node | deploy_host_key | revoke_host_key | rotate_stage1 | rotate_stage2 | rotate_stage3
+ssh_keys_deploy_authorized_keys: true
+ssh_keys_deploy_client_keys: false
+ssh_keys_deploy_ssh_config: false
+ssh_keys_config_profile: "openlab"
+
+# 單一端點金鑰操作參數
+ssh_keys_target_endpoint: ""
+ssh_keys_endpoint_target_user: "{{ ssh_keys_admin_user }}"
+ssh_keys_endpoint_pub_path: ""
+
+# 金鑰輪換參數
+ssh_keys_rotate_user: "{{ ssh_keys_admin_user }}"
+ssh_keys_rotate_pub_path: ""
+ssh_keys_rotate_priv_path: ""
+ssh_keys_rotate_key_options: "{{ ssh_keys_admin_options }}"
+ssh_keys_rotate_old_pub_key: ""

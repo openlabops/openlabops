@@ -1,0 +1,40 @@
+{
+  "default_locale": "en_US",
+  "gitea": {
+    "url": "http://gitea.lab:3000",
+    "owner": "OpenLabOps",
+    "token_file": "/usr/local/bin/openlab/.gitea_token",
+    "repos": {
+      "workflows": "openlab-workflows",
+      "configs": "openlab-configs",
+      "secrets": "openlab-secrets"
+    }
+  },
+  "ssh": {
+    "ssh_dir": "~/.ssh",
+    "managed_keys": [
+      {
+        "name": "ansible.key",
+        "type": "ed25519",
+        "desc": "Ansible Automation Key"
+      },
+      {
+        "name": "id_user.key",
+        "type": "ed25519",
+        "desc": "Admin Operator Key"
+      },
+      {
+        "name": "git.key",
+        "type": "ed25519",
+        "desc": "Git Version Control Access Key"
+      }
+    ],
+    "endpoint_hosts": [
+      "workstation"
+    ]
+  },
+  "cluster_targets": [
+    {"name": "control", "host": "localhost", "os": "Linux", "mgr": "generic", "is_local": true}
+  ]
+}
+

@@ -1,0 +1,32 @@
+name: System Base Setup Workflow (Node Provisioning)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_hosts:
+        description: 'Target Hosts Group (default: servers)'
+        required: false
+        default: 'servers'
+
+jobs:
+  system-base-setup:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GIT_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
+
+      - name: 執行節點自舉劇本 (Node Provisioning Base & Docker Setup)
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/node-provisioning.yml'
+          target_hosts: ${{ inputs.target_hosts }}
+          tags: 'base_setup,docker_setup'
+          key_name: 'ansible.key'
+          gitea_host: ${{ vars.GIT_HOST || 'gitea.lab' }}
+          org_name: ${{ vars.ORG_NAME || 'OpenLabOps' }}
+          token: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}

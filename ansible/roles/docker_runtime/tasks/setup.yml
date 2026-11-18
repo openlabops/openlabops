@@ -1,0 +1,50 @@
+---
+# ==============================================================================
+# Task: setup.yml
+# 管理 Docker Compose 工作目錄結構與 Git post-push 部署觸發 Hook
+# ==============================================================================
+- name: 確保 docker-compose 工作目錄存在 ({{ docker_compose_dir_target }})
+  ansible.builtin.file:
+    path: "{{ docker_compose_dir_target }}"
+    state: directory
+    owner: "{{ docker_compose_owner }}"
+    mode: "{{ docker_compose_mode }}"
+
+- name: 檢查 docker-compose 目錄下是否已有 .git 倉庫
+  ansible.builtin.stat:
+    path: "{{ docker_compose_dir_target }}/.git"
+  register: docker_compose_git_stat
+
+- name: 確保 .git/hooks 目錄存在
+  ansible.builtin.file:
+    path: "{{ docker_compose_dir_target }}/.git/hooks"
+    state: directory
+    mode: '0755'
+  when:
+    - docker_hook_enabled | bool
+    - docker_compose_git_stat.stat.exists
+  become: "{{ true if (os_family | default('')) == 'OracleLinux' else false }}"
+
+- name: 部署 post-push trigger hook 腳本 (直接內容注入)
+  ansible.builtin.copy:
+    content: "{{ docker_hook_script_content }}"
+    dest: "{{ docker_compose_dir_target }}/.git/hooks/post-push"
+    mode: '0755'
+    owner: "{{ docker_compose_owner }}"
+  when:
+    - docker_hook_enabled | bool
+    - docker_compose_git_stat.stat.exists
+    - (docker_hook_script_content | default('')) != ''
+  become: "{{ true if (os_family | default('')) == 'OracleLinux' else false }}"
+
+- name: 部署 post-push trigger hook 腳本 (檔案來源複製)
+  ansible.builtin.copy:
+    src: "{{ docker_hook_script_src }}"
+    dest: "{{ docker_compose_dir_target }}/.git/hooks/post-push"
+    mode: '0755'
+    owner: "{{ docker_compose_owner }}"
+  when:
+    - docker_hook_enabled | bool
+    - docker_compose_git_stat.stat.exists
+    - (docker_hook_script_content | default('')) == ''
+  become: "{{ true if (os_family | default('')) == 'OracleLinux' else false }}"

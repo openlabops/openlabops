@@ -1,0 +1,138 @@
+name: Git Platform Key Rotation Workflow (Gitea & GitHub API)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_nodes:
+        description: 'Target Node(s) to automatically deploy newly rotated client keys (e.g. dev, localhost)'
+        required: false
+        default: 'dev'
+
+jobs:
+  rotate-git-keys:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GIT_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
+
+      - name: 準備基礎環境 (含 Curl 與 JQ)
+        uses: ./.gitea/actions/setup-environment
+        with:
+          packages: "git openssh-client curl jq ansible"
+
+      - name: 檢出聯邦倉庫
+        uses: ./.gitea/actions/checkout-federation
+        with:
+          repos: "openlab-secrets openlab-ansible openlab-configs"
+          gitea_host: ${{ vars.GIT_HOST || 'gitea.lab' }}
+          org_name: ${{ vars.ORG_NAME || 'OpenLabOps' }}
+          token: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}
+
+      - name: 產生新 Git 存取 Key Pair
+        uses: ./.gitea/actions/generate-key-pair
+        with:
+          key_name: "git"
+          key_type: "ed25519"
+          dest_dir: "/tmp/ssh_rotation"
+          comment: "git-rotation"
+
+      - name: 讀取公鑰內容
+        run: |
+          echo "OLD_PUB_KEY=$(cat /tmp/openlab-secrets/ssh-key/git.pub 2>/dev/null | tr -d '\r\n')" >> $GITHUB_ENV
+          echo "NEW_PUB_KEY=$(cat /tmp/ssh_rotation/git.pub | tr -d '\r\n')" >> $GITHUB_ENV
+
+      - name: 透過 Gitea API 寫入新 SSH 公鑰
+        env:
+          BOT_TOKEN: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}
+          GITEA_HOST: ${{ vars.GIT_HOST || 'gitea.lab' }}
+        run: |
+          KEY_TITLE="git-$(date +%Y%m%d%H%M%S)"
+          RESPONSE=$(curl -s -X POST "http://${GITEA_HOST}/api/v1/user/keys" \
+            -H "Authorization: token ${BOT_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{\"title\":\"${KEY_TITLE}\",\"key\":\"${NEW_PUB_KEY}\"}")
+          echo "Gitea Add Key Response: ${RESPONSE}"
+
+      - name: 透過 GitHub API 寫入新 SSH 公鑰
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          if [ -n "${GH_TOKEN}" ]; then
+            KEY_TITLE="git-$(date +%Y%m%d%H%M%S)"
+            RESPONSE=$(curl -s -X POST "https://api.github.com/user/keys" \
+              -H "Authorization: Bearer ${GH_TOKEN}" \
+              -H "Accept: application/vnd.github+json" \
+              -H "Content-Type: application/json" \
+              -d "{\"title\":\"${KEY_TITLE}\",\"key\":\"${NEW_PUB_KEY}\"}")
+            echo "GitHub Add Key Response: ${RESPONSE}"
+          else
+            echo "GH_TOKEN 尚未配置，跳過 GitHub API 金鑰註冊。"
+          fi
+
+      - name: 驗證新 SSH 私鑰與 Git 服務連線
+        env:
+          GITEA_HOST: ${{ vars.GIT_HOST || 'gitea.lab' }}
+        run: |
+          ssh-keyscan -H "${GITEA_HOST}" github.com >> ~/.ssh/known_hosts 2>/dev/null || true
+          echo "Testing Gitea SSH connection..."
+          ssh -o StrictHostKeyChecking=accept-new -i /tmp/ssh_rotation/git.key -T "git@${GITEA_HOST}" 2>&1 || true
+          echo "Testing GitHub SSH connection..."
+          ssh -o StrictHostKeyChecking=accept-new -i /tmp/ssh_rotation/git.key -T git@github.com 2>&1 || true
+
+      - name: 透過 Gitea API 移除舊 SSH 公鑰
+        env:
+          BOT_TOKEN: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}
+          GITEA_HOST: ${{ vars.GIT_HOST || 'gitea.lab' }}
+        run: |
+          KEYS_JSON=$(curl -s -X GET "http://${GITEA_HOST}/api/v1/user/keys" -H "Authorization: token ${BOT_TOKEN}")
+          OLD_KEY_ID=$(echo "${KEYS_JSON}" | jq -r ".[] | select(.key | contains(\"${OLD_PUB_KEY}\")) | .id")
+          if [ -n "${OLD_KEY_ID}" ] && [ "${OLD_KEY_ID}" != "null" ]; then
+            echo "Removing old Gitea SSH key ID: ${OLD_KEY_ID}"
+            curl -s -X DELETE "http://${GITEA_HOST}/api/v1/user/keys/${OLD_KEY_ID}" -H "Authorization: token ${BOT_TOKEN}"
+          else
+            echo "未找到相符的舊 Gitea SSH 金鑰 ID，跳過刪除。"
+          fi
+
+      - name: 透過 GitHub API 移除舊 SSH 公鑰
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
+        run: |
+          if [ -n "${GH_TOKEN}" ]; then
+            KEYS_JSON=$(curl -s -X GET "https://api.github.com/user/keys" -H "Authorization: Bearer ${GH_TOKEN}")
+            OLD_KEY_ID=$(echo "${KEYS_JSON}" | jq -r ".[] | select(.key | contains(\"${OLD_PUB_KEY}\")) | .id")
+            if [ -n "${OLD_KEY_ID}" ] && [ "${OLD_KEY_ID}" != "null" ]; then
+              echo "Removing old GitHub SSH key ID: ${OLD_KEY_ID}"
+              curl -s -X DELETE "https://api.github.com/user/keys/${OLD_KEY_ID}" -H "Authorization: Bearer ${GH_TOKEN}"
+            else
+              echo "未找到相符的舊 GitHub SSH 金鑰 ID，跳過刪除。"
+            fi
+          fi
+
+      - name: 複製新金鑰至 Secrets 倉庫
+        run: |
+          cp -f /tmp/ssh_rotation/git.key /tmp/openlab-secrets/ssh-key/git.key
+          cp -f /tmp/ssh_rotation/git.pub /tmp/openlab-secrets/ssh-key/git.pub
+
+      - name: 提交新金鑰至 Secrets 倉庫
+        uses: ./.gitea/actions/git-sync-commit
+        with:
+          target_dir: "/tmp/openlab-secrets"
+          commit_msg: "chore(ssh): rotate git ssh key pair"
+          author_name: "ci-bot"
+          author_email: "ci-bot@lab"
+
+      - name: 配置連線金鑰供 Ansible 派發
+        uses: ./.gitea/actions/setup-ssh-auth
+        with:
+          key_name: "ansible.key"
+
+      - name: 階段五：自動派發新金鑰至目標節點
+        uses: ./.gitea/actions/run-ansible-playbook
+        with:
+          playbook: "playbooks/deploy-node-ssh-keys.yml"
+          extra_vars: "target_hosts=${{ inputs.target_nodes || 'dev' }} custom_secrets_dir=/tmp/openlab-secrets custom_configs_dir=/tmp/openlab-configs client_keys=true authorized_keys=true ssh_config=true"

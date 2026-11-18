@@ -1,0 +1,49 @@
+---
+# ==============================================================================
+# Task: sshd_2fa.yml
+# 管理者帳號 SSH 雙重認證 (公鑰 + 密碼)
+# ==============================================================================
+- name: 防呆 - 禁止對自動化帳號套用密碼認證
+  ansible.builtin.assert:
+    that: baseline_2fa_user != (ansible_user | default('lab'))
+    fail_msg: "{{ ansible_user | default('lab') }} 為自動化維運帳號，不可套用密碼雙重認證。"
+
+- name: 讀取密碼雜湊欄位 (Linux)
+  ansible.builtin.shell: "getent shadow {{ baseline_2fa_user }} | cut -d: -f2"
+  register: pw_hash_linux
+  changed_when: false
+  when: (ansible_facts.system | default('')) == 'Linux'
+
+- name: 讀取密碼雜湊欄位 (BSD)
+  ansible.builtin.shell: "pw usershow {{ baseline_2fa_user }} | cut -d: -f2"
+  register: pw_hash_bsd
+  changed_when: false
+  when: (ansible_facts.system | default('')) == 'BSD'
+
+- name: 確認管理者已設定可用密碼 (避免鎖死)
+  ansible.builtin.assert:
+    that:
+      - pw_hash | length > 1
+      - not pw_hash.startswith('!')
+      - not pw_hash.startswith('*')
+    fail_msg: >-
+      {{ inventory_hostname }}: {{ baseline_2fa_user }} 帳號未設定密碼或已鎖定，
+      請先執行 `sudo passwd {{ baseline_2fa_user }}` 再套用。
+    quiet: true
+  vars:
+    pw_hash: "{{ (pw_hash_linux.stdout | default('')) if (ansible_facts.system | default('')) == 'Linux' else (pw_hash_bsd.stdout | default('')) }}"
+  when: (baseline_2fa_state | default('present')) == 'present'
+
+- name: 寫入 / 移除 Match User 區塊 (以 sshd -t 驗證)
+  ansible.builtin.blockinfile:
+    path: /etc/ssh/sshd_config
+    marker: "# {mark} ANSIBLE MANAGED: {{ baseline_2fa_user }} ssh 2fa"
+    insertafter: EOF
+    backup: true
+    state: "{{ baseline_2fa_state | default('present') }}"
+    validate: "/usr/sbin/sshd -t -f %s"
+    block: |
+      Match User {{ baseline_2fa_user }}
+          PasswordAuthentication yes
+          AuthenticationMethods publickey,password
+  notify: Reload sshd

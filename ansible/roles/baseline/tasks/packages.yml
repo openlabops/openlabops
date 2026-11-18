@@ -1,0 +1,46 @@
+---
+# ==============================================================================
+# 跨平台基礎套件安裝 (PhotonOS, OracleLinux, ArchLinux, Debian, Alpine)
+# ==============================================================================
+- name: 確定目標安裝之完整套件清單 (基礎 + 額外擴充)
+  ansible.builtin.set_fact:
+    target_install_packages: "{{ (baseline_packages + (baseline_packages_extra | default([]))) | unique }}"
+
+- name: 安裝 Photon OS 基礎套件 (tdnf)
+  ansible.builtin.package:
+    name: "{{ target_install_packages }}"
+    state: present
+  when: (os_family | default('')) == 'PhotonOS' or (ansible_facts.os_family | default('')) in ['PhotonOS', 'VMware Photon OS']
+
+- name: 安裝 Oracle Linux / RedHat 基礎套件 (dnf)
+  ansible.builtin.package:
+    name: "{{ target_install_packages }}"
+    state: present
+  when: (os_family | default('')) == 'OracleLinux' or (ansible_facts.os_family | default('')) in ['RedHat', 'Rocky', 'AlmaLinux']
+
+- name: 安裝 Arch Linux 基礎套件 (pacman)
+  ansible.builtin.package:
+    name: "{{ target_install_packages }}"
+    state: present
+  when: (os_family | default('')) == 'ArchLinux' or (ansible_facts.os_family | default('')) in ['Archlinux', 'ArchLinux']
+
+- name: 安裝 Debian / Ubuntu 基礎套件 (apt)
+  ansible.builtin.apt:
+    name: "{{ target_install_packages }}"
+    state: present
+    update_cache: yes
+  when: (ansible_facts.os_family | default('')) == 'Debian'
+
+- name: 安裝 Alpine Linux 基礎套件 (apk)
+  ansible.builtin.apk:
+    name: "{{ target_install_packages }}"
+    state: present
+    update_cache: yes
+  when: (ansible_facts.os_family | default('')) == 'Alpine'
+
+- name: 安裝 openSUSE / SLES 基礎套件 (zypper)
+  ansible.builtin.zypper:
+    name: "{{ target_install_packages }}"
+    state: present
+  when: (ansible_facts.os_family | default('')) == 'Suse'
+

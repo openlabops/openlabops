@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+*.retry
+*.swp
+.*.swp
+*.kate-swp
+.*.kate-swp
+inventory/
+conf/nodes/archive/
+.agents/WHITEBOARD.md
+tools/conf/*.local.json
+tools/conf/*.tmp

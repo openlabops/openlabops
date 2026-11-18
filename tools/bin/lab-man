@@ -1,0 +1,187 @@
+#!/usr/bin/env python3
+# ==============================================================================
+# OpenLabOps Interactive Terminal User Manual Browser
+# Governed by [INV-01] (100% Python Standard Library)
+# ==============================================================================
+
+import os
+import sys
+import shutil
+import subprocess
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+CMD_PREFIX = "lab"
+
+sys.path.insert(0, str(REPO_ROOT / "tools" / "lib"))
+try:
+    from core.i18n import get_locale, t
+    _LOCALE = get_locale()
+except Exception:
+    _LOCALE = "en_US"
+    def t(key, default="", **kwargs):
+        return default.format(**kwargs) if kwargs else default
+
+def _resolve_manual_root() -> Path:
+    candidates = [
+        REPO_ROOT,
+        Path(__file__).resolve().parent.parent,
+        Path("/usr/local/bin/openlab"),
+        Path.home() / "openlabops",
+    ]
+    for base in candidates:
+        if _LOCALE == "zh_TW" and (base / "docs" / "zh_TW" / "user_manual").exists():
+            return base / "docs" / "zh_TW" / "user_manual"
+        if _LOCALE == "ja_JP" and (base / "docs" / "ja" / "user_manual").exists():
+            return base / "docs" / "ja" / "user_manual"
+        if (base / "docs" / "user_manual").exists():
+            return base / "docs" / "user_manual"
+    return REPO_ROOT / "docs" / "user_manual"
+
+MANUAL_ROOT = _resolve_manual_root()
+
+CATEGORIES = [
+    ("01_installation", f"🚀 {t('man.cat_install', 'Installation & Onboarding')}", [
+        (f"{CMD_PREFIX}-init", t("man.desc_init", "Day-0 cluster initialization wizard")),
+        (f"{CMD_PREFIX}-node", t("man.desc_node", "Dynamic node onboarding & configuration tool")),
+        (f"{CMD_PREFIX}-discover", t("man.desc_discover", "Live hardware & SSH key telemetry probe"))
+    ]),
+    ("02_operations", f"🛠️ {t('man.cat_ops', 'Post-Installation Operational Apps')}", [
+        (f"{CMD_PREFIX}-status", t("man.desc_status", "Real-time cluster status dashboard & zero-trust key audit")),
+        (f"{CMD_PREFIX}-ssh", t("man.desc_ssh", "Smart SSH launcher & 4-stage key rotation")),
+        (f"{CMD_PREFIX}-setup", t("man.desc_setup", "Server baseline setup & container environment mounting")),
+        (f"{CMD_PREFIX}-backup", t("man.desc_backup", "Declarative node backup & disaster recovery")),
+        (f"{CMD_PREFIX}-config", t("man.desc_config", "Local dotfiles & shell environment manager")),
+        (f"{CMD_PREFIX}-upgrade", t("man.desc_upgrade", "Parallel multi-node package upgrade tool")),
+        (f"{CMD_PREFIX}-info", t("man.desc_info", "Node telemetry inspection & Markdown doc generator")),
+        (f"{CMD_PREFIX}-tools", t("man.desc_tools", "Interactive operations TUI console")),
+        (f"{CMD_PREFIX}-apply", t("man.desc_apply", "Declarative template compiler & config sync")),
+        (f"{CMD_PREFIX}-diff", t("man.desc_diff", "Configuration drift inspector"))
+    ]),
+    ("03_development", f"💻 {t('man.cat_dev', 'Development & Test Console')}", [
+        (f"{CMD_PREFIX}-dev-setup", t("man.desc_dev_setup", "Developer & AI workspace bootstrapper")),
+        (f"{CMD_PREFIX}-test", t("man.desc_test", "Multi-distro sandbox & integration test engine")),
+        (f"{CMD_PREFIX}-man", t("man.desc_man", "Interactive terminal manual browser"))
+    ])
+]
+
+# ANSI colors
+C_RESET = "\033[0m"
+C_BOLD = "\033[1m"
+C_GREEN = "\033[32m"
+C_BLUE = "\033[34m"
+C_CYAN = "\033[36m"
+C_YELLOW = "\033[33m"
+C_DIM = "\033[2m"
+
+def find_manual_file(cmd: str) -> Path | None:
+    for cat_dir, _, tools in CATEGORIES:
+        for t_name, _ in tools:
+            if t_name == cmd or t_name == f"{CMD_PREFIX}-{cmd}":
+                candidate = MANUAL_ROOT / cat_dir / f"{t_name}.1.md"
+                if candidate.exists():
+                    return candidate
+    return None
+
+def display_manual(path: Path, wait_for_enter: bool = False):
+    pager = shutil.which("less")
+    content = path.read_text(encoding="utf-8")
+    
+    # Simple markdown terminal colorizer
+    lines = []
+    for line in content.splitlines():
+        if line.startswith("# "):
+            lines.append(f"{C_BOLD}{C_GREEN}{line}{C_RESET}")
+        elif line.startswith("## "):
+            lines.append(f"\n{C_BOLD}{C_CYAN}{line}{C_RESET}")
+        elif line.startswith("### "):
+            lines.append(f"{C_BOLD}{C_YELLOW}{line}{C_RESET}")
+        elif line.startswith("```"):
+            lines.append(f"{C_DIM}{line}{C_RESET}")
+        elif line.startswith("- "):
+            lines.append(f"  • {line[2:]}")
+        else:
+            lines.append(line)
+    colored_text = "\n".join(lines)
+    
+    if pager and sys.stdout.isatty():
+        try:
+            proc = subprocess.Popen([pager, "-R"], stdin=subprocess.PIPE, text=True)
+            proc.communicate(colored_text)
+            return
+        except Exception:
+            pass
+    print(colored_text)
+    if wait_for_enter and sys.stdin.isatty():
+        input(f"\n{C_DIM}{t('man.press_enter', '[Press Enter to return to menu...]')}{C_RESET}")
+
+def category_menu(cat_idx: int):
+    cat_dir, cat_title, tools = CATEGORIES[cat_idx]
+    while True:
+        os.system("clear" if os.name == "posix" else "cls")
+        print(f"\n{C_BOLD}{C_CYAN}══════════════════════════════════════════════════════════════{C_RESET}")
+        print(f"  {cat_title}")
+        print(f"{C_BOLD}{C_CYAN}══════════════════════════════════════════════════════════════{C_RESET}\n")
+        
+        for idx, (cmd, desc) in enumerate(tools, 1):
+            print(f"  [{C_GREEN}{idx}{C_RESET}] {C_BOLD}{cmd:<18}{C_RESET} : {desc}")
+        print(f"  [{C_YELLOW}0{C_RESET}] {t('man.back_main', 'Back to main menu')}")
+        
+        choice = input(f"\n{C_BOLD}{t('man.prompt_cmd', 'Enter command number to view (0-{n}): ', n=len(tools))}{C_RESET}").strip()
+        if choice == "0":
+            break
+        if choice.isdigit() and 1 <= int(choice) <= len(tools):
+            cmd = tools[int(choice) - 1][0]
+            p = find_manual_file(cmd)
+            if p:
+                display_manual(p, wait_for_enter=True)
+            else:
+                print(t("man.not_found", "Manual not found: {cmd}", cmd=cmd))
+                input(t("man.press_enter_cont", "Press Enter to continue..."))
+
+def main_menu():
+    while True:
+        os.system("clear" if os.name == "posix" else "cls")
+        print(f"\n{C_BOLD}{C_GREEN}╔══════════════════════════════════════════════════════════════╗{C_RESET}")
+        print(f"{C_BOLD}{C_GREEN}║   📖 {CMD_PREFIX.upper()} OPERATIONS ENGINE - {t('man.banner_title', 'INTERACTIVE TERMINAL USER MANUAL'):<33} ║{C_RESET}")
+        print(f"{C_BOLD}{C_GREEN}╚══════════════════════════════════════════════════════════════╝{C_RESET}\n")
+        
+        for idx, (_, title, tools) in enumerate(CATEGORIES, 1):
+            print(f"  [{C_GREEN}{idx}{C_RESET}] {title} ({t('man.tools_count', '{n} tools', n=len(tools))})")
+        print(f"  [{C_YELLOW}0{C_RESET}] {t('man.exit_label', 'Exit')}")
+        
+        choice = input(f"\n{C_BOLD}{t('man.prompt_cat', 'Select category (1-3, 0 to exit): ')}{C_RESET}").strip()
+        if choice in ["0", "q", "exit"]:
+            print(t("man.goodbye", "Goodbye!"))
+            break
+        if choice.isdigit() and 1 <= int(choice) <= len(CATEGORIES):
+            category_menu(int(choice) - 1)
+
+def main():
+    if len(sys.argv) > 1:
+        raw_arg = sys.argv[1].strip().lower()
+        if raw_arg in ["--version", "-v"]:
+            try:
+                from core.version import print_version
+                print_version("OpenLabOps Terminal Manual Browser (lab-man)")
+            except Exception:
+                ver_file = REPO_ROOT / "VERSION"
+                ver = ver_file.read_text(encoding="utf-8").strip() if ver_file.exists() else "1.0.0"
+                print(f"OpenLabOps Terminal Manual Browser (lab-man) v{ver}")
+            sys.exit(0)
+        if raw_arg in ["--help", "-h"]:
+            print(f"Usage: {sys.argv[0]} [COMMAND_NAME]")
+            print(f"Example: {sys.argv[0]} status")
+            sys.exit(0)
+        p = find_manual_file(sys.argv[1])
+        if p:
+            display_manual(p)
+            sys.exit(0)
+        else:
+            print(t("man.not_found", "Manual not found: {cmd}", cmd=sys.argv[1]))
+            sys.exit(1)
+            
+    main_menu()
+
+if __name__ == "__main__":
+    main()

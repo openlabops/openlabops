@@ -1,0 +1,38 @@
+---
+# ==============================================================================
+# Playbook: Declarative Node File Backup (Node -> Configs Repo)
+# Target: {{ target | default('all') }}
+# Purpose:
+#   Iterates over the host's `backup` / `dotfiles` list variable (`item.src`, `item.dest`)
+#   and fetches files safely into the configs repository.
+#   Zero hardcoded OS or appliance paths [INV-03].
+# ==============================================================================
+- name: Declarative Node File Backup
+  hosts: "{{ target | default(target_hosts | default('all')) }}"
+  gather_facts: false
+  become: true
+
+  vars:
+    app_prefix: "{{ repo_prefix | default('openlab') }}"
+    configs_repo_dir: "{{ host_configs_dir | default(custom_configs_root | default(lookup('env', 'HOME') + '/' + app_prefix + '-configs')) }}"
+    file_sync_list: "{{ (backup | from_yaml) if (backup is defined and backup is string) else (backup | default(dotfiles | default([]))) }}"
+
+  tasks:
+    - name: Ensure target backup directory exists on controller
+      ansible.builtin.file:
+        path: "{{ configs_repo_dir }}/{{ inventory_hostname }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fetch configured targets to configs repository
+      ansible.builtin.fetch:
+        src: "{{ item.src }}"
+        dest: "{{ configs_repo_dir }}/{{ inventory_hostname }}/{{ item.dest }}"
+        flat: yes
+      loop: "{{ file_sync_list }}"
+      when:
+        - item.src is defined and item.src | length > 0
+        - item.dest is defined and item.dest | length > 0

@@ -1,0 +1,401 @@
+---
+# ==============================================================================
+# Playbook: Deploy & Update Operations Tools Suite (Neutral)
+# Target: {{ target_hosts | default('servers') }}
+# Neutralized for OpenLabOps / OpenLabOps Operations Engine
+# ==============================================================================
+- name: "在目標節點安裝與更新維運工具鏈 (Deploy Operations Tools)"
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: true
+  gather_subset:
+    - '!all'
+    - '!min'
+    - 'distribution'
+  become: true
+
+  vars:
+    app_prefix: "{{ repo_prefix | default('openlab') }}"
+    tools_install_dir: "{{ ops_tools_install_dir | default('/usr/local/bin/' + app_prefix) }}"
+    bin_symlink_dir: "/usr/local/bin"
+    token_config_dir: "{{ tools_install_dir }}"
+    etc_config_dir: "/usr/local/etc/{{ app_prefix }}/conf"
+    target_locale: "{{ cluster_locale | default(lookup('env', 'LAB_LANG') | default('zh_TW')) }}"
+    tools_git_repo: "{{ ops_tools_repo | default('http://' + (git_platform_host | default('mock-gitea')) + '/' + (git_org_name | default(cluster_name | default('openlab'))) + '/' + app_prefix + '-tools.git') }}"
+    control_lang_candidates:
+      - "{{ playbook_dir }}/../../lang"
+      - "{{ lookup('env', 'HOME') }}/{{ app_prefix }}-ops/lang"
+      - "/workspace/lang"
+      - "{{ playbook_dir }}/../../tools/lang"
+    control_engine_candidates:
+      - "{{ playbook_dir }}/../../engine"
+      - "{{ lookup('env', 'HOME') }}/{{ app_prefix }}-ops/engine"
+      - "/workspace/engine"
+    backup_cfg_candidates:
+      - "{{ playbook_dir }}/../../{{ app_prefix }}-configs/conf/backup_profiles.yml"
+      - "{{ lookup('env', 'HOME') }}/{{ app_prefix }}-configs/conf/backup_profiles.yml"
+      - "{{ playbook_dir }}/../../conf/backup_profiles.yml"
+    control_tools_candidates:
+      - "{{ lookup('env', 'HOME') }}/{{ app_prefix }}-tools"
+      - "{{ playbook_dir }}/../../{{ app_prefix }}-tools"
+      - "{{ playbook_dir }}/../../tools"
+      - "{{ lookup('env', 'HOME') }}/{{ app_prefix }}-ops/tools"
+      - "/tmp/{{ app_prefix }}-tools"
+      - "{{ lookup('env', 'HOME') }}/openlab-tools"
+
+    cmd_prefix: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}"
+
+    cli_symlinks:
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-tools", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-tools" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-status", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-status" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-setup", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-setup" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-ssh", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-ssh" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-info", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-info" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-backup", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-backup" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-config", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-config" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-node", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-node" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-upgrade", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-upgrade" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-boot-sync", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-boot-sync" }
+      - { src: "bin/{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-man", dest: "{{ 'lab' if ('openlab' in app_prefix) else 'labadmin' }}-man" }
+      - { src: "bin/sync-ops-tools", dest: "sync-ops-tools" }
+      - { src: "bin/sync-ssh-config", dest: "sync-ssh-config" }
+      - { src: "bin/sync-ssh-keys", dest: "sync-ssh-keys" }
+      - { src: "bin/generate-host-ssh-key", dest: "generate-host-ssh-key" }
+      - { src: "bin/revoke-host-ssh-key", dest: "revoke-host-ssh-key" }
+      - { src: "bin/render-node-doc", dest: "render-node-doc" }
+
+    legacy_cleanup:
+      - "{{ bin_symlink_dir }}/lab-ctl"
+      - "{{ bin_symlink_dir }}/server-setup"
+      - "{{ bin_symlink_dir }}/encrypt-gitea-token"
+      - "{{ tools_install_dir }}/python"
+      - "{{ tools_install_dir }}/script"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. 確保目標節點基礎依賴就緒 (全發行版支援，離線環境容錯)
+    # --------------------------------------------------------------------------
+    - name: 確保 Arch Linux 基礎套件就緒
+      community.general.pacman:
+        name: [python, git, curl, rsync]
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == 'Archlinux'
+      ignore_errors: true
+
+    - name: 確保 Debian / Ubuntu 基礎套件就緒
+      ansible.builtin.apt:
+        name: [python3, git, curl, rsync]
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == 'Debian'
+      ignore_errors: true
+
+    - name: 確保 RedHat / Oracle Linux / Fedora / Rocky 基礎套件就緒
+      ansible.builtin.dnf:
+        name: [python3, git, curl, rsync]
+        state: present
+      when: ansible_facts['os_family'] in ['RedHat', 'Rocky', 'AlmaLinux']
+      ignore_errors: true
+
+    - name: 確保 Photon OS 基礎套件就緒
+      ansible.builtin.package:
+        name: [python3, git, curl, rsync]
+        state: present
+      when: ansible_facts['os_family'] in ['PhotonOS', 'VMware Photon OS']
+      ignore_errors: true
+
+    - name: 確保 Alpine Linux 基礎套件就緒
+      community.general.apk:
+        name: [python3, git, curl, rsync]
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == 'Alpine'
+      ignore_errors: true
+
+    # --------------------------------------------------------------------------
+    # 2. 建立標準系統目錄結構
+    # --------------------------------------------------------------------------
+    - name: 建立工具鏈根目錄 ({{ tools_install_dir }})
+      ansible.builtin.file:
+        path: "{{ tools_install_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: 建立 Token 與私密配置目錄 ({{ token_config_dir }})
+      ansible.builtin.file:
+        path: "{{ token_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: 建立全域宣告式組態目錄 ({{ etc_config_dir }})
+      ansible.builtin.file:
+        path: "{{ etc_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: 探測備份組態樣板來源
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      loop: "{{ backup_cfg_candidates }}"
+      register: backup_cfg_stats
+
+    - name: 確定備份組態可用來源
+      ansible.builtin.set_fact:
+        resolved_backup_cfg: "{{ (backup_cfg_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 初始化本機宣告式備份設定檔 ({{ etc_config_dir }}/backup.yml)
+      ansible.builtin.copy:
+        src: "{{ resolved_backup_cfg }}"
+        dest: "{{ etc_config_dir }}/backup.yml"
+        owner: root
+        group: root
+        mode: '0664'
+        force: no
+      when: resolved_backup_cfg != ''
+
+    # --------------------------------------------------------------------------
+    # 3. 部署工具代碼庫 (優先從控制端同步，備選自 Git 檢出)
+    # --------------------------------------------------------------------------
+    - name: 探測控制端是否具備 tools 代碼
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      loop: "{{ control_tools_candidates }}"
+      register: control_tools_stats
+
+    - name: 確定控制端可用代碼路徑
+      ansible.builtin.set_fact:
+        resolved_control_tools: "{{ (control_tools_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 從控制端同步 tools 代碼至目標節點
+      ansible.posix.synchronize:
+        src: "{{ resolved_control_tools }}/"
+        dest: "{{ tools_install_dir }}/"
+        delete: no
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+      when: resolved_control_tools != ''
+
+    - name: 若控制端無代碼，自 Git 檢出 tools 倉庫
+      ansible.builtin.git:
+        repo: "{{ tools_git_repo }}"
+        dest: "{{ tools_install_dir }}"
+        version: main
+        force: yes
+      when: resolved_control_tools == ''
+
+    - name: 探測控制端是否具備 i18n 多國語系字典檔 (lang/)
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      loop: "{{ control_lang_candidates }}"
+      register: control_lang_stats
+
+    - name: 確定控制端可用 lang 字典路徑
+      ansible.builtin.set_fact:
+        resolved_control_lang: "{{ (control_lang_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 同步 i18n 多國語系字典至目標節點 ({{ tools_install_dir }}/lang/)
+      ansible.posix.synchronize:
+        src: "{{ resolved_control_lang }}/"
+        dest: "{{ tools_install_dir }}/lang/"
+        delete: no
+      when: resolved_control_lang != ''
+
+    - name: 探測控制端是否具備核心引擎模組 (engine/)
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      loop: "{{ control_engine_candidates }}"
+      register: control_engine_stats
+
+    - name: 確定控制端可用 engine 路徑
+      ansible.builtin.set_fact:
+        resolved_control_engine: "{{ (control_engine_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 同步核心引擎模組至目標節點 ({{ tools_install_dir }}/engine/)
+      ansible.posix.synchronize:
+        src: "{{ resolved_control_engine }}/"
+        dest: "{{ tools_install_dir }}/engine/"
+        delete: no
+        rsync_opts:
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+      when: resolved_control_engine != ''
+
+    # --------------------------------------------------------------------------
+    # 4. 權限標準化
+    # --------------------------------------------------------------------------
+    - name: 確保 VERSION 檔案具備全域唯讀權限 (0644)
+      ansible.builtin.file:
+        path: "{{ tools_install_dir }}/VERSION"
+        mode: '0644'
+        owner: root
+        group: root
+      failed_when: false
+
+    - name: 批次確保 bin、lib、engine 與 lang 目錄具備標準執行與讀取權限 (0755)
+      ansible.builtin.file:
+        path: "{{ tools_install_dir }}/{{ item }}"
+        mode: '0755'
+        owner: root
+        group: root
+        recurse: yes
+      loop:
+        - "bin"
+        - "lib"
+        - "engine"
+        - "lang"
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 4.1 AOT 預編譯 Python Bytecode (消除非 root 執行期編譯延遲)
+    # --------------------------------------------------------------------------
+    - name: AOT 預編譯 Python Bytecode 至 __pycache__
+      ansible.builtin.command: "{{ ansible_playbook_python | default('python3') }} -m compileall -f -q {{ tools_install_dir }}/lib"
+      changed_when: false
+      failed_when: false
+
+    - name: 確保預編譯之 .pyc 具備全域唯讀權限 (0644)
+      ansible.builtin.shell: |
+        find {{ tools_install_dir }}/lib -name "*.pyc" -exec chmod 0644 {} +
+      changed_when: false
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 5. 建立標準 CLI 軟連結至 /usr/local/bin/
+    # --------------------------------------------------------------------------
+    - name: 建立 CLI 軟連結至 {{ bin_symlink_dir }}
+      ansible.builtin.file:
+        src: "{{ tools_install_dir }}/{{ item.src }}"
+        dest: "{{ bin_symlink_dir }}/{{ item.dest }}"
+        state: link
+        force: yes
+      loop: "{{ cli_symlinks }}"
+
+    - name: 部署開機金鑰自癒服務單元 (/etc/systemd/system/lab-boot-sync.service)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lab-boot-sync.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=OpenLabOps Non-7/24 Node Boot Public Key Synchronizer
+          Documentation=https://github.com/openlab/openlabops
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart={{ bin_symlink_dir }}/lab-boot-sync
+          StandardOutput=journal
+          StandardError=journal
+          TimeoutStartSec=60
+
+          [Install]
+          WantedBy=multi-user.target
+      when: (ansible_facts.service_mgr | default('')) == 'systemd'
+      failed_when: false
+
+    - name: 啟用開機金鑰自癒服務 (lab-boot-sync.service)
+      ansible.builtin.systemd:
+        name: lab-boot-sync.service
+        daemon_reload: yes
+        enabled: yes
+      when: (ansible_facts.service_mgr | default('')) == 'systemd'
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 5.1 i18n 多國語系環境變數與預設配置固化
+    # --------------------------------------------------------------------------
+    - name: 固化語系狀態檔 (/usr/local/etc/{{ app_prefix }}/locale)
+      ansible.builtin.copy:
+        dest: "/usr/local/etc/{{ app_prefix }}/locale"
+        owner: root
+        group: root
+        mode: '0644'
+        content: "{{ target_locale }}\n"
+      failed_when: false
+
+    - name: 固化全系統環境變數 (/etc/environment)
+      ansible.builtin.lineinfile:
+        path: /etc/environment
+        regexp: '^(\s*){{ item.key }}='
+        line: '{{ item.key }}="{{ target_locale }}"'
+        state: present
+        create: yes
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - { key: 'LAB_LANG' }
+      failed_when: false
+
+    - name: 部署全域系統語系環境設定檔 (/etc/profile.d/{{ app_prefix }}-lang.sh)
+      ansible.builtin.copy:
+        dest: "/etc/profile.d/{{ app_prefix }}-lang.sh"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          # Auto-generated by OpenLabOps
+          export LAB_LANG="{{ target_locale }}"
+      failed_when: false
+
+    - name: 確保 BSD 全域語系環境變數 (/etc/profile)
+      ansible.builtin.lineinfile:
+        path: /etc/profile
+        line: "export LAB_LANG={{ target_locale }}"
+        state: present
+        create: yes
+      when: ansible_facts['os_family'] == 'BSD'
+      failed_when: false
+
+    - name: 確保 tools.config.json 預設語系已設定
+      ansible.builtin.lineinfile:
+        path: "{{ item }}"
+        regexp: '^(\s*)"default_locale":.*'
+        line: '  "default_locale": "{{ target_locale }}",'
+        insertafter: '^{'
+      loop:
+        - "{{ tools_install_dir }}/conf/tools.config.json"
+        - "{{ etc_config_dir }}/tools.config.json"
+      failed_when: false
+
+    - name: 固化使用者 ~/.bashrc 語系環境變數
+      ansible.builtin.lineinfile:
+        path: "{{ item }}/.bashrc"
+        regexp: '^(\s*)export LAB_LANG='
+        line: 'export LAB_LANG="{{ target_locale }}"'
+        state: present
+        create: no
+      loop:
+        - "{{ lookup('env', 'HOME') }}"
+        - "/home/{{ ansible_user | default('labadmin') }}"
+        - "/root"
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 6. 清理舊版廢棄軟連結與歷史目錄
+    # --------------------------------------------------------------------------
+    - name: 清理舊版廢棄軟連結與歷史目錄
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop: "{{ legacy_cleanup }}"
+      failed_when: false

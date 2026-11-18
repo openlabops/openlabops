@@ -1,0 +1,49 @@
+name: "Git Sync & Commit"
+description: "Idempotently detects working directory changes, commits with [skip ci], and pushes back to Gitea"
+inputs:
+  target_dir:
+    description: "Directory of the git repository to commit"
+    required: true
+  commit_msg:
+    description: "Git commit message (will append [skip ci] automatically)"
+    required: true
+  author_name:
+    description: "Git commit author name"
+    required: false
+    default: "CI Bot"
+  author_email:
+    description: "Git commit author email"
+    required: false
+    default: "bot@openlab.local"
+  branch:
+    description: "Target git branch to push"
+    required: false
+    default: "main"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Commit and Push Changes
+      shell: sh
+      env:
+        TARGET_DIR: ${{ inputs.target_dir }}
+        MSG: ${{ inputs.commit_msg }}
+        AUTHOR: ${{ inputs.author_name }}
+        EMAIL: ${{ inputs.author_email }}
+        BRANCH: ${{ inputs.branch }}
+      run: |
+
+        cd "$TARGET_DIR"
+
+        git config user.name "$AUTHOR"
+        git config user.email "$EMAIL"
+
+        if [ -n "$(git status --porcelain)" ]; then
+          echo "📝 [Action: git-sync-commit] Changes detected in ${TARGET_DIR}, committing..."
+          git add -A
+          git commit -m "${MSG} [skip ci]"
+          git push origin "$BRANCH"
+          echo "✅ [Action: git-sync-commit] Changes committed and pushed to ${BRANCH} successfully."
+        else
+          echo "ℹ️ [Action: git-sync-commit] No changes detected in ${TARGET_DIR}; skipping commit."
+        fi

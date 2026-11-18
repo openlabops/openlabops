@@ -1,0 +1,133 @@
+---
+# ==============================================================================
+# OpenLabOps-Ops Developer & AI Agent Environment Setup Playbook
+# File: ansible/playbooks/dev-environment.yml
+# Target: localhost (Developer Workstation / AGY Remote / Dev Container)
+# Purpose: Declaratively provisions the local development workspace, validating
+#          Docker, Dagger, CUE, Git Hooks, and Schema Integrity.
+# ==============================================================================
+- name: Declarative Local Developer & AI Agent Environment Provisioning
+  hosts: localhost
+  connection: local
+  gather_facts: yes
+  vars:
+    dagger_version: "v0.16.2"
+    user_bin_dir: "{{ ansible_facts['env']['HOME'] }}/.local/bin"
+    mock_network_name: "lab-mock-net"
+    mock_subnet: "172.28.0.0/16"
+    setup_test_fleet: false
+    setup_agy_remote: false
+    start_agy_remote: false
+    sandbox_compose_file: "{{ playbook_dir }}/../../tests/sandbox/docker-compose.yml"
+
+  tasks:
+    - name: "[1/7] Verify Host Architecture & Python Runtime"
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['python']['version']['major'] == 3
+          - ansible_facts['python']['version']['minor'] >= 10
+        fail_msg: "Python 3.10+ is required for OpenLabOps-Ops development."
+        success_msg: "Python {{ ansible_facts['python']['version']['major'] }}.{{ ansible_facts['python']['version']['minor'] }} detected [✓]"
+
+    - name: "[2/7] Verify Docker Daemon Connectivity"
+      ansible.builtin.command: docker info
+      register: docker_check
+      changed_when: false
+      failed_when: docker_check.rc != 0
+
+    - name: "[3/7] Verify CUE CLI Availability"
+      ansible.builtin.command: cue version
+      register: cue_check
+      changed_when: false
+      failed_when: false
+
+    - name: "Install CUE CLI if Missing"
+      when: cue_check.rc != 0
+      block:
+        - name: Ensure user local bin directory exists
+          ansible.builtin.file:
+            path: "{{ user_bin_dir }}"
+            state: directory
+            mode: "0755"
+
+        - name: Download and install CUE binary
+          ansible.builtin.unarchive:
+            src: "https://github.com/cue-lang/cue/releases/download/v0.12.0/cue_v0.12.0_linux_amd64.tar.gz"
+            dest: "{{ user_bin_dir }}"
+            remote_src: yes
+            creates: "{{ user_bin_dir }}/cue"
+            mode: "0755"
+
+    - name: "[4/7] Verify Dagger CLI Availability"
+      ansible.builtin.command: dagger version
+      register: dagger_check
+      changed_when: false
+      failed_when: false
+
+    - name: "Install Dagger CLI if Missing"
+      when: dagger_check.rc != 0
+      block:
+        - name: Ensure user local bin directory exists
+          ansible.builtin.file:
+            path: "{{ user_bin_dir }}"
+            state: directory
+            mode: "0755"
+
+        - name: Download Dagger install script and install locally
+          ansible.builtin.shell: |
+            curl -fsSL https://dl.dagger.io/dagger/install.sh | BIN_DIR="{{ user_bin_dir }}" sh
+          args:
+            creates: "{{ user_bin_dir }}/dagger"
+
+    - name: "[5/7] Ensure Sandbox Docker Network Exists"
+      ansible.builtin.shell: |
+        if ! docker network ls --format '{% raw %}{{.Name}}{% endraw %}' | grep -q "lab-mock-net"; then
+          docker network create --subnet={{ mock_subnet }} {{ mock_network_name }}
+        fi
+      changed_when: false
+
+    - name: "[6/7] Validate All CUE Architectural Invariants & Schemas"
+      ansible.builtin.command: cue vet ./schema/...
+      args:
+        chdir: "{{ playbook_dir }}/../.."
+      register: cue_vet_check
+      changed_when: false
+      failed_when: cue_vet_check.rc != 0
+
+    - name: Check if .git repository exists
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../.git"
+      register: git_repo_stat
+
+    - name: "[7/7] Install Git Pre-commit Hook for Schema Integrity"
+      when: git_repo_stat.stat.exists
+      block:
+        - name: Ensure .git/hooks directory exists
+          ansible.builtin.file:
+            path: "{{ playbook_dir }}/../../.git/hooks"
+            state: directory
+            mode: "0755"
+
+        - name: Copy pre-commit hook
+          ansible.builtin.copy:
+            dest: "{{ playbook_dir }}/../../.git/hooks/pre-commit"
+            mode: "0755"
+            content: |
+              #!/bin/sh
+              set -e
+              echo "Running CUE architectural schema check..."
+              cue vet ./schema/...
+              echo "CUE schema validation passed [✓]"
+
+    - name: "Display Workspace Readiness Summary"
+      ansible.builtin.debug:
+        msg:
+          - "===================================================================="
+          - "  🎉 OPENLABOPS DEVELOPER WORKSPACE IS READY FOR AI AGENTS"
+          - "===================================================================="
+          - "  • Ansible Playbook : Local environment converged idempotently"
+          - "  • CUE CLI          : Verified & Schemas validated (./schema/...)"
+          - "  • Docker & Sandbox : lab-mock-net ({{ mock_subnet }}) ready"
+          - "  • Git Pre-commit   : Hook installed for automated schema checks"
+          - "  • AI Agent DevEx   : Zero manual setup needed; ready to build!"
+          - "===================================================================="

@@ -1,0 +1,42 @@
+name: Update Node Information Documentation Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      limit:
+        description: 'Limit execution to specific host/pattern (e.g. dev, servers; leave empty for all)'
+        required: false
+        default: ''
+
+jobs:
+  update-node-docs:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
+
+      - name: 執行節點審計與文檔渲染劇本
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/update-node-docs.yml'
+          extra_vars: ${{ '{' }}{{ '{' }} inputs.limit != '' && format('limit={0}', inputs.limit) || '' {{ '}' }}{{ '}' }}
+          need_tools: 'true'
+          need_configs: 'true'
+          key_name: '{{ keys.ansible | default("ansible.key") }}'
+          gitea_host: ${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}
+          org_name: ${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}
+          token: ${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}
+
+      - name: 提交並推送更新至 Configs 倉庫
+        uses: ./.gitea/actions/git-sync-commit
+        with:
+          target_dir: '/tmp/{{ git_platform.repo_prefix }}-configs'
+          commit_msg: 'docs(telemetry): auto-update node information ground truth and docs'
+          author_name: 'ci-bot'
+          author_email: 'ci-bot@{{ cluster.domain }}'
+          branch: 'main'

@@ -1,0 +1,12 @@
+---
+# ==============================================================================
+# Role Tasks: docker_runtime
+# Dispatcher: setup (建立目錄與 Hook) 或 pull (更新代碼倉庫)
+# ==============================================================================
+- name: "執行 Docker Compose 環境配置與 Hook 部署"
+  ansible.builtin.include_tasks: setup.yml
+  when: (docker_action | default('setup')) == 'setup'
+
+- name: "執行 Docker Compose 倉庫 Git Pull 更新"
+  ansible.builtin.include_tasks: pull.yml
+  when: (docker_action | default('setup')) == 'pull'

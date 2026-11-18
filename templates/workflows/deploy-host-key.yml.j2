@@ -1,0 +1,67 @@
+name: Deploy Generic Host SSH Key Workflow ($hostname.pub)
+
+on:
+  workflow_dispatch:
+    inputs:
+      host_name:
+        description: 'Endpoint Host Name (e.g., workstation, laptop, desktop)'
+        required: true
+        default: 'workstation'
+      pub_key:
+        description: 'Public Key Content (Optional: if passed, will be saved to secrets)'
+        required: false
+        default: ''
+
+jobs:
+  deploy-host-key:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
+
+      - name: 檢出 Secrets 倉庫
+        if: ${{ '{' }}{{ '{' }} inputs.pub_key != '' {{ '}' }}{{ '}' }}
+        uses: ./.gitea/actions/checkout-federation
+        with:
+          repos: "{{ git_platform.repo_prefix }}-secrets"
+          gitea_host: ${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}
+          org_name: ${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}
+          token: ${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}
+
+      - name: 若由遠端傳入公鑰字串，寫入並提交至 Secrets
+        if: ${{ '{' }}{{ '{' }} inputs.pub_key != '' {{ '}' }}{{ '}' }}
+        env:
+          HOST_NAME: ${{ '{' }}{{ '{' }} inputs.host_name {{ '}' }}{{ '}' }}
+          PUB_KEY: ${{ '{' }}{{ '{' }} inputs.pub_key {{ '}' }}{{ '}' }}
+        run: |
+          if ! echo "$HOST_NAME" | grep -Eq '^[a-zA-Z0-9._-]+$'; then
+            echo "Error: Invalid host_name '$HOST_NAME'" >&2
+            exit 1
+          fi
+          mkdir -p /tmp/{{ git_platform.repo_prefix }}-secrets/ssh-key
+          printf '%s\n' "$PUB_KEY" > "/tmp/{{ git_platform.repo_prefix }}-secrets/ssh-key/${HOST_NAME}.pub"
+          chmod 644 "/tmp/{{ git_platform.repo_prefix }}-secrets/ssh-key/${HOST_NAME}.pub"
+
+      - name: 提交傳入之端點公鑰至 Secrets
+        if: ${{ '{' }}{{ '{' }} inputs.pub_key != '' {{ '}' }}{{ '}' }}
+        uses: ./.gitea/actions/git-sync-commit
+        with:
+          target_dir: '/tmp/{{ git_platform.repo_prefix }}-secrets'
+          commit_msg: "feat(ssh): save endpoint ${{ '{' }}{{ '{' }} inputs.host_name {{ '}' }}{{ '}' }}.pub"
+          author_name: 'ci-bot'
+          author_email: 'ci-bot@{{ cluster.domain }}'
+
+      - name: 執行 Ansible Playbook (Deploy $hostname.pub)
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/deploy-host-key.yml'
+          extra_vars: "host_name=${{ '{' }}{{ '{' }} inputs.host_name {{ '}' }}{{ '}' }} host_pub_key_path=/tmp/{{ git_platform.repo_prefix }}-secrets/ssh-key/${{ '{' }}{{ '{' }} inputs.host_name {{ '}' }}{{ '}' }}.pub"
+          key_name: '{{ keys.ansible | default("ansible.key") }}'
+          gitea_host: ${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}
+          org_name: ${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}
+          token: ${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}

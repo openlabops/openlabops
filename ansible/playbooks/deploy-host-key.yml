@@ -1,0 +1,58 @@
+---
+# ==============================================================================
+# Playbook: Deploy Generic Endpoint SSH Public Key ($hostname.pub) to Target Servers
+# Target Hosts: servers (or override via --extra-vars "target_hosts=...")
+# Target User: labadmin (strictly separate from lab automation user)
+# Usage:
+#   ansible-playbook -i inventory/hosts.yml playbooks/deploy-host-key.yml \
+#     --extra-vars "host_name=workstation"
+# ==============================================================================
+- name: Deploy Endpoint SSH Public Key ($hostname.pub) to Target Servers
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: false
+
+  vars:
+    endpoint_name: "{{ host_name | default('workstation') }}"
+    target_account: "{{ target_user | default('labadmin') }}"
+    ip_allowed_cidrs: 'from="192.168.1.0/24"'
+
+  tasks:
+    - name: 依優先順序探測公鑰檔案 (傳入變數 -> ~/.ssh/ -> CI runner -> 本地 secrets repo)
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      loop:
+        - "{{ host_pub_key_path | default('/nonexistent') }}"
+        - "{{ lookup('env', 'HOME') + '/.ssh/' + endpoint_name + '.pub' }}"
+        - "/tmp/openlab-secrets/ssh-key/{{ endpoint_name }}.pub"
+        - "{{ lookup('env', 'HOME') + '/openlab-secrets/ssh-key/' + endpoint_name + '.pub' }}"
+      register: pub_candidates
+
+    - name: 確定端點公鑰檔案路徑
+      ansible.builtin.set_fact:
+        resolved_pub_path: "{{ (pub_candidates.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 讀取端點公鑰內容
+      ansible.builtin.slurp:
+        src: "{{ resolved_pub_path }}"
+      delegate_to: localhost
+      register: host_pub_content
+      when: resolved_pub_path != ''
+
+    - name: 部署端點公鑰至目標主機 labadmin 帳號 authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ target_account }}"
+        key: "{{ host_pub_content.content | b64decode | trim }}"
+        key_options: "{{ endpoint_key_options if (endpoint_key_options is defined and endpoint_key_options | length > 0) else omit if (endpoint_key_options is defined and endpoint_key_options == '') else ip_allowed_cidrs }}"
+        state: present
+        exclusive: false
+        comment: "{{ endpoint_name }}-client"
+      when: resolved_pub_path != ''
+      become: true
+      register: deploy_key_res
+
+    - name: 顯示部署結果
+      ansible.builtin.debug:
+        msg: >-
+          Host {{ inventory_hostname }} ({{ ansible_host }}):
+          {{ endpoint_name + '.pub deployed successfully to labadmin account' if (deploy_key_res is defined and deploy_key_res.changed) else endpoint_name + '.pub already present in labadmin account' if (resolved_pub_path != '') else 'Skipped: public key not found for ' + endpoint_name }}

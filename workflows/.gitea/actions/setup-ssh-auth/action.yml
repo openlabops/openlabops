@@ -1,0 +1,46 @@
+name: "Setup SSH Key Authentication"
+description: "Copies and configures OpenSSH private key from openlab-secrets into runner's ~/.ssh/ directory with strict permissions"
+inputs:
+  key_name:
+    description: "Name of the SSH private key file in openlab-secrets/ssh-key/"
+    required: false
+    default: "ansible.key"
+  secrets_dir:
+    description: "Path to checked-out openlab-secrets repository"
+    required: false
+    default: "/tmp/openlab-secrets"
+  dest_dir:
+    description: "Destination SSH directory on runner"
+    required: false
+    default: "$HOME/.ssh"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Inject SSH Private Key
+      shell: sh
+      env:
+        KEY_NAME: ${{ inputs.key_name }}
+        SECRETS_DIR: ${{ inputs.secrets_dir }}
+        DEST_DIR: ${{ inputs.dest_dir }}
+      run: |
+        # Expand ~ if necessary
+        case "$DEST_DIR" in
+          "~"*) DEST_DIR="${HOME}${DEST_DIR#\~}" ;;
+        esac
+
+        SRC_KEY="${SECRETS_DIR}/ssh-key/${KEY_NAME}"
+        TARGET_KEY="${DEST_DIR}/${KEY_NAME}"
+
+        echo "🔑 [Action: setup-ssh-auth] Setting up SSH private key: ${KEY_NAME}..."
+        mkdir -p "$DEST_DIR"
+        chmod 700 "$DEST_DIR"
+
+        if [ -f "$SRC_KEY" ]; then
+          cp -f "$SRC_KEY" "$TARGET_KEY"
+          chmod 600 "$TARGET_KEY"
+          echo "  [✓] Key installed to ${TARGET_KEY} (chmod 0600)"
+        else
+          echo "  [✗] Error: Source key ${SRC_KEY} not found!"
+          exit 1
+        fi

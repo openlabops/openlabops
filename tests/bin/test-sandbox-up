@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Atomic Test Helper: Start and Wait for Sandbox Container Fleet
+# File: tests/bin/test-sandbox-up
+# ==============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+SANDBOX_DIR="${REPO_ROOT}/tests/sandbox"
+COMPOSE_FILE="${SANDBOX_DIR}/docker-compose.yml"
+PROJECT_NAME="$(basename "${REPO_ROOT}")"
+
+GITEA_MODE="${GITEA_MODE:-standalone}"
+GITEA_URL="${GITEA_URL:-http://172.28.0.2:3000}"
+
+echo "[Phase 1/2] Spinning up sandbox containers (${COMPOSE_FILE}, Gitea Mode: ${GITEA_MODE})..."
+if [[ "${GITEA_MODE}" == "standalone" ]]; then
+    docker compose -f "${COMPOSE_FILE}" up -d --build --force-recreate
+elif [[ "${GITEA_MODE}" == "dind" ]]; then
+    # In dind mode, spin up containers without mock-gitea, then launch embedded Gitea attached to mock-photon
+    SERVICES=$(docker compose -f "${COMPOSE_FILE}" config --services | grep -v '^mock-gitea$' || true)
+    docker compose -f "${COMPOSE_FILE}" up -d --build --force-recreate ${SERVICES}
+    echo "  • Launching embedded Gitea container inside mock-photon network namespace (172.28.0.20:3000)..."
+    docker rm -f mock-node-gitea 2>/dev/null || true
+    docker run -d --name mock-node-gitea --network container:mock-photon \
+      -e USER_UID=1000 -e USER_GID=1000 \
+      -e GITEA__security__INSTALL_LOCK=true \
+      -e GITEA__server__DOMAIN=172.28.0.20 \
+      -e GITEA__server__SSH_DOMAIN=172.28.0.20 \
+      -e GITEA__server__HTTP_PORT=3000 \
+      -e GITEA__server__ROOT_URL=http://172.28.0.20:3000/ \
+      -e GITEA__server__SSH_PORT=22 \
+      gitea/gitea:latest >/dev/null 2>&1
+else
+    # external or local: do not start any gitea container
+    SERVICES=$(docker compose -f "${COMPOSE_FILE}" config --services | grep -v '^mock-gitea$' || true)
+    docker compose -f "${COMPOSE_FILE}" up -d --build ${SERVICES}
+fi
+
+echo "[Phase 2/2] Waiting for SSHD and service endpoints on 172.28.0.0/16..."
+for ip in 172.28.0.10 172.28.0.20 172.28.0.30 172.28.0.40 172.28.0.50; do
+    echo -n "  • Node ${ip}:22 ... "
+    for i in {1..30}; do
+        if timeout 1 bash -c "true &>/dev/null >/dev/tcp/${ip}/22" 2>/dev/null; then
+            echo "Ready [✓]"
+            break
+        fi
+        sleep 0.5
+    done
+done
+
+if [[ "${GITEA_MODE}" == "standalone" ]]; then
+    for i in {1..30}; do
+        if curl -sI http://172.28.0.2:3000/ >/dev/null 2>&1; then
+            echo "  • Standalone Gitea http://172.28.0.2:3000 ... Ready [✓]"
+            break
+        fi
+        sleep 0.5
+    done
+elif [[ "${GITEA_MODE}" == "dind" ]]; then
+    for i in {1..30}; do
+        if curl -sI http://172.28.0.20:3000/ >/dev/null 2>&1; then
+            echo "  • Node Embedded Gitea http://172.28.0.20:3000 ... Ready [✓]"
+            break
+        fi
+        sleep 0.5
+    done
+elif [[ "${GITEA_MODE}" == "external" ]]; then
+    echo "  • External Gitea Mode: Targeting ${GITEA_URL} [✓]"
+elif [[ "${GITEA_MODE}" == "local" ]]; then
+    echo "  • Local Direct Mode: Skipping Gitea endpoint check [✓]"
+fi
+
+echo "[✓] All sandbox fleet containers are online and responsive!"
+

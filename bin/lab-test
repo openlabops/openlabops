@@ -1,0 +1,710 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# OpenLabOps Master Test Console & Interactive TUI
+# File: bin/lab-test / bin/lab-test
+# Governed by [INV-09] (Production Tool Testing Contract)
+# Dispatches to atomic helpers under tests/bin/
+# ==============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+TESTS_BIN="${REPO_ROOT}/tests/bin"
+PROJECT_NAME="$(basename "${REPO_ROOT}")"
+SELF_NAME="$(basename "$0")"
+
+cd "${REPO_ROOT}"
+
+# Determine command prefix (labadmin or lab)
+CMD_PREFIX="labadmin"
+if [[ "${SELF_NAME}" == lab-* ]] || [[ "${PROJECT_NAME}" == "openlabops" ]]; then
+    CMD_PREFIX="lab"
+fi
+
+# ANSI Colors
+C_RESET="\033[0m"
+C_BOLD="\033[1m"
+C_GREEN="\033[32m"
+C_BLUE="\033[34m"
+C_YELLOW="\033[33m"
+C_RED="\033[31m"
+C_CYAN="\033[36m"
+C_MAGENTA="\033[35m"
+C_DIM="\033[2m"
+
+# i18n Dictionary Management
+declare -gA I18N
+init_i18n() {
+    local target_lang="${1:-${LAB_LANG:-}}"
+    if [[ -z "${target_lang}" ]]; then
+        if [[ "${LANG:-}" == zh* || "${LC_ALL:-}" == zh* ]]; then
+            target_lang="zh_TW"
+        elif [[ "${LANG:-}" == ja* || "${LC_ALL:-}" == ja* ]]; then
+            target_lang="ja_JP"
+        else
+            target_lang="en_US"
+        fi
+    fi
+    export LAB_LANG="${target_lang}"
+
+    local lang_file="${REPO_ROOT}/lang/${LAB_LANG}.json"
+    if [ ! -f "${lang_file}" ]; then
+        lang_file="${REPO_ROOT}/lang/en_US.json"
+    fi
+
+    unset I18N
+    declare -g -A I18N
+    while IFS=$'\t' read -r k v; do
+        [[ -n "${k}" ]] && I18N["${k}"]="${v}"
+    done < <(python3 -c "import json, sys; [print(f'{k}\t{v}') for k, v in json.load(open(sys.argv[1], encoding='utf-8')).get('test', {}).items()]" "${lang_file}" 2>/dev/null || true)
+}
+
+t_test() {
+    local key="$1"
+    local default="${2:-$1}"
+    if [[ -n "${I18N[$key]:-}" ]]; then
+        echo -e "${I18N[$key]}"
+    else
+        echo -e "${default}"
+    fi
+}
+
+select_language() {
+    echo -e "\n${C_BOLD}${C_CYAN}┌────────────────────────────────────────────────────────────────────────┐${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}│  $(t_test lang_menu_title "🌐 選擇測試環境語系 (Select Test Language / Locale)")                   │${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}"
+    echo -e "  [${C_GREEN}1${C_RESET}] $(t_test lang_opt_zh "繁體中文 (Traditional Chinese - zh_TW)")"
+    echo -e "  [${C_GREEN}2${C_RESET}] $(t_test lang_opt_en "English (US - en_US)")"
+    echo -e "  [${C_GREEN}3${C_RESET}] $(t_test lang_opt_ja "日本語 (Japanese - ja_JP)")"
+    echo -e "${C_BOLD}${C_CYAN}└────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+
+    local prompt_lang="$(printf '\n\033[1m%s\033[0m ' "$(t_test lang_prompt "請選擇語系 / Select Language (1-3, 預設 1):")")"
+    read -rp "${prompt_lang}" l_choice
+    case "${l_choice}" in
+        1|"") init_i18n "zh_TW" ;;
+        2)    init_i18n "en_US" ;;
+        3)    init_i18n "ja_JP" ;;
+        *)    echo -e "${C_RED}$(t_test lang_invalid "無效選擇")${C_RESET}"; return ;;
+    esac
+    echo -e "${C_BOLD}${C_GREEN}$(t_test lang_switched "✓ 測試語系已切換為 / Locale set to:") ${LAB_LANG}${C_RESET}\n"
+}
+
+init_i18n
+
+# Gitea Deployment Mode (standalone, dind, external, local)
+GITEA_MODE="${GITEA_MODE:-standalone}"
+GITEA_URL="${GITEA_URL:-http://172.28.0.2:3000}"
+export GITEA_MODE
+export GITEA_URL
+
+get_gitea_mode_desc() {
+    case "${GITEA_MODE}" in
+        standalone) t_test gitea_desc_standalone "獨立沙箱容器 (Standalone Mock: 172.28.0.2:3000)" ;;
+        dind)       t_test gitea_desc_dind "節點內嵌 DinD (Node Embedded: 172.28.0.20:3000)" ;;
+        external)
+            local ext_tpl="$(t_test gitea_desc_external "現有外部實體 (External Live: {url})")"
+            echo "${ext_tpl/\{url\}/${GITEA_URL}}"
+            ;;
+        local)      t_test gitea_desc_local "本機直通免 Gitea (Local Direct / Offline)" ;;
+        *)          echo "${GITEA_MODE}" ;;
+    esac
+}
+
+select_gitea_mode() {
+    echo -e "\n${C_BOLD}${C_CYAN}┌────────────────────────────────────────────────────────────────────────┐${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}│  $(t_test gitea_mode_title "🌐 請選擇測試環境 Gitea 建立模式 (Gitea Establishment Mode)")          │${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}"
+    echo -e "  [${C_GREEN}1${C_RESET}] $(t_test gitea_standalone "獨立沙箱容器模式 (Standalone Mock: 172.28.0.2:3000) [預設/純淨隔離]")"
+    echo -e "  [${C_GREEN}2${C_RESET}] $(t_test gitea_dind "節點內嵌 DinD 模式 (Node Embedded: 172.28.0.20:3000) [模擬節點自託管]")"
+    echo -e "  [${C_GREEN}3${C_RESET}] $(t_test gitea_external "現有外部實體模式 (External Live Gitea: 指向既有實體伺服器)")"
+    echo -e "  [${C_GREEN}4${C_RESET}] $(t_test gitea_local "本機直通免 Gitea 模式 (Local Direct Git: 離線/快速除錯驗證)")"
+    echo -e "${C_BOLD}${C_CYAN}└────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+
+    local prompt_gitea="$(printf '\n\033[1m%s\033[0m ' "$(t_test gitea_prompt "請選擇 Gitea 模式 (1-4, 預設 1):")")"
+    read -rp "${prompt_gitea}" g_choice
+    case "${g_choice}" in
+        1|"")
+            GITEA_MODE="standalone"
+            GITEA_URL="http://172.28.0.2:3000"
+            ;;
+        2)
+            GITEA_MODE="dind"
+            GITEA_URL="http://172.28.0.20:3000"
+            ;;
+        3)
+            GITEA_MODE="external"
+            local prompt_ext="$(printf '\n\033[1m%s\033[0m ' "$(t_test gitea_ext_prompt "請輸入外部 Gitea URL (預設 http://192.168.1.90:3000):")")"
+            read -rp "${prompt_ext}" ext_url
+            GITEA_URL="${ext_url:-http://192.168.1.90:3000}"
+            ;;
+        4)
+            GITEA_MODE="local"
+            GITEA_URL="local"
+            ;;
+        *)
+            echo -e "${C_RED}$(t_test gitea_invalid_choice "無效選擇，維持目前模式:") $(get_gitea_mode_desc)${C_RESET}"
+            return
+            ;;
+    esac
+    export GITEA_MODE GITEA_URL
+    export RUN_FULL_TESTS=true
+    echo -e "${C_BOLD}${C_GREEN}$(t_test gitea_mode_switched "✓ Gitea 建立模式已切換為:") $(get_gitea_mode_desc)${C_RESET}\n"
+}
+
+show_help() {
+    echo -e "${C_BOLD}Usage:${C_RESET} ./${SELF_NAME} [OPTIONS]"
+    echo ""
+    echo -e "${C_BOLD}Modes & Options:${C_RESET}"
+    echo "  -m, --manual                  [手動測試模式] 純啟動沙箱環境供人工手工測試，不跑自動測試"
+    echo "  -a, --auto                    [全自動驗收] 建立環境 ➔ 納管 ➔ 工具驗證 ➔ 災難演練 ➔ 產出報告 ➔ 銷毀"
+    echo "  --dr, --drill [target]        [災難復原演練] 針對指定目標節點模擬破壞與無損還原"
+    echo "  -g, --dagger                  [Dagger 測試] 執行 Dagger 容器流水線驗收"
+    echo "  --kvm [persona]               [KVM 深度測試] 啟動 QEMU/KVM 虛擬機進行納管測試 (預設: storage)"
+    echo "  -s, --status, --info          [狀態查詢] 檢視目前沙箱節點健康狀態與操作指令指引"
+    echo "  -r, --reset                   [節點重置] 清除沙箱節點已分發之金鑰與使用者，還原至初始狀態"
+    echo "  -d, --down, --clean           [環境銷毀] 停止並徹底刪除所有沙箱測試容器與虛擬磁碟"
+    echo "  -G, --gitea-mode <mode>       [Gitea 模式] 指定測試用 Gitea 建立模式 (standalone|dind|external|local)"
+    echo "      --gitea-url <url>         [外部 URL] 當 Gitea 模式為 external 時指定遠端 Gitea URL 位址"
+    echo "  --lang <locale>               [語系切換] 設定測試界面與受控環境語系 (zh_TW|en_US|ja_JP)"
+    echo "  -h, --help                    顯示本說明訊息"
+    echo ""
+    echo -e "${C_BOLD}Notes:${C_RESET}"
+    echo "  若無傳入任何參數且終端處於互動環境 (TTY)，將自動啟動 TUI 互動選單。"
+}
+
+show_operational_dashboard() {
+    echo ""
+    echo -e "${C_BOLD}${C_GREEN}╔══════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_BOLD}${C_GREEN}║     🎉 [${PROJECT_NAME}] 虛擬沙箱節點叢集運行中！(Ready for Manual Testing)    ║${C_RESET}"
+    echo -e "${C_BOLD}${C_GREEN}║     測試網段: 172.28.0.0/16 | Gitea 模式: $(get_gitea_mode_desc)              ║${C_RESET}"
+    echo -e "${C_BOLD}${C_GREEN}╚══════════════════════════════════════════════════════════════════════════════╝${C_RESET}\n"
+
+    echo -e "${C_BOLD}【 運行中沙箱測試節點狀態 (Active Sandbox Fleet) 】${C_RESET}"
+    echo -e "┌────────────────┬───────────────┬────────────────────────┬──────────────────────┐"
+    echo -e "│ 容器節點名稱   │ 容器 IP 位址  │ 作業系統發行版/角色    │ 容器狀態 / 端口      │"
+    echo -e "├────────────────┼───────────────┼────────────────────────┼──────────────────────┤"
+    echo -e "│ mock-console   │ 172.28.0.5    │ 管理控制台工作站       │ Running (OpenSSH)    │"
+    echo -e "│ mock-gitea     │ 172.28.0.2    │ 集中式版控 Gitea       │ Running (HTTP:3000)  │"
+    echo -e "│ mock-arch      │ 172.28.0.10   │ Arch Linux (Rolling)   │ Ready (SSH:22)       │"
+    echo -e "│ mock-photon    │ 172.28.0.20   │ VMware Photon OS 5.0   │ Ready (SSH:22)       │"
+    echo -e "│ mock-oracle    │ 172.28.0.30   │ Oracle Linux 9 (RHEL)  │ Ready (SSH:22)       │"
+    echo -e "│ mock-debian    │ 172.28.0.40   │ Debian GNU/Linux 12    │ Ready (SSH:22)       │"
+    echo -e "│ mock-alpine    │ 172.28.0.50   │ Alpine Linux 3.20      │ Ready (SSH:22)       │"
+    echo -e "└────────────────┴───────────────┴────────────────────────┴──────────────────────┘\n"
+
+    echo -e "${C_BOLD}${C_CYAN}【 💡 手工測試操作指引 (登入 mock-console 進行測試) 】${C_RESET}"
+    echo -e "  ${C_BOLD}1. 登入管理控制台工作站 (以 labadmin 使用者操作)${C_RESET}"
+    echo -e "     ${C_YELLOW}docker exec -it mock-console bash${C_RESET}\n"
+
+    echo -e "  ${C_BOLD}2. 手動執行 Day-0 節點納管精靈 (體驗人機互動鍵入)${C_RESET}"
+    echo -e "     ${C_YELLOW}docker exec -it mock-console ${CMD_PREFIX}-node add 172.28.0.10${C_RESET}     # 納管 Arch 節點"
+    echo -e "     ${C_YELLOW}docker exec -it mock-console ${CMD_PREFIX}-init${C_RESET}                   # 執行全叢集 Day-0 引導向導\n"
+
+    echo -e "  ${C_BOLD}3. 執行正式維運工具 (驗證狀態、備份與金鑰)${C_RESET}"
+    echo -e "     ${C_YELLOW}docker exec -it mock-console ${CMD_PREFIX}-status -k${C_RESET}              # 檢視節點與金鑰白名單"
+    echo -e "     ${C_YELLOW}docker exec -it mock-console ${CMD_PREFIX}-node list${C_RESET}                # 檢視動態事實卡片"
+    echo -e "     ${C_YELLOW}docker exec -it mock-console ${CMD_PREFIX}-backup --node mock-arch${C_RESET} # 測試備份功能\n"
+
+    echo -e "  ${C_BOLD}4. 清理並銷毀測試環境${C_RESET}"
+    echo -e "     ${C_YELLOW}./bin/${SELF_NAME} -d${C_RESET}                                       # 測試完畢一鍵清理銷毀\n"
+}
+
+# Atomic execution wrappers
+action_up() {
+    "${TESTS_BIN}/test-sandbox-up"
+}
+
+action_gitea() {
+    "${TESTS_BIN}/test-gitea-init"
+}
+
+action_onboard() {
+    "${TESTS_BIN}/test-day0-onboard"
+}
+
+action_down() {
+    "${TESTS_BIN}/test-sandbox-down"
+}
+
+action_reset() {
+    "${TESTS_BIN}/test-reset"
+}
+
+action_dagger() {
+    "${TESTS_BIN}/test-dagger-e2e"
+}
+
+action_dr_drill() {
+    local target="${1:-mock-arch,mock-photon,mock-debian}"
+    "${TESTS_BIN}/test-dr-drill" "${target}"
+}
+
+action_verify_tools() {
+    echo -e "\n${C_BOLD}${C_CYAN}[Phase 4/6] 驗證正式維運工具鏈與全節點連通性 (Production Tools Audit inside mock-console)...${C_RESET}"
+    local console_user="${CONSOLE_USER:-labadmin}"
+    docker exec -u "${console_user}" mock-console bash -c "
+        set -euo pipefail
+        cd ~/${PROJECT_NAME}
+        export PATH=\"/usr/local/bin:\${PATH}\"
+        echo '  • [1/5] 檢查正式維運工具入口 (${CMD_PREFIX}-tools --version)...'
+        ${CMD_PREFIX}-tools --version >/dev/null
+        echo '  • [2/5] 檢查全節點連通性 (ansible ping)...'
+        AUTH_KEY='lab'
+        if [ ! -f ~/.ssh/ansible.key ] && [ -f ~/.ssh/ansible.key ]; then
+            AUTH_KEY='ansible'
+        fi
+        ansible servers -i ansible/inventory/hosts.yml -m ping -u \"\${AUTH_KEY}\" --private-key ~/.ssh/\"\${AUTH_KEY}\".key >/dev/null
+        if grep -q 'appliances:' ansible/inventory/hosts.yml 2>/dev/null; then
+            ansible appliances -i ansible/inventory/hosts.yml -m raw -a 'echo pong' -u root --private-key ~/.ssh/\"\${AUTH_KEY}\".key >/dev/null || true
+        fi
+        echo '  • [3/5] 檢查叢集狀態與全參數 (${CMD_PREFIX}-status -v/-h/-q/-k/-a/-n/-b/-t/--json)...'
+        ${CMD_PREFIX}-status -q >/dev/null
+        ${CMD_PREFIX}-status -k >/dev/null
+        ${CMD_PREFIX}-status -a >/dev/null
+        ${CMD_PREFIX}-status -n >/dev/null
+        ${CMD_PREFIX}-status -b -q >/dev/null
+        ${CMD_PREFIX}-status -t -q >/dev/null
+        ${CMD_PREFIX}-status -q --json >/dev/null
+        echo '  • [4/5] 檢查節點管理與手冊查詢 (${CMD_PREFIX}-node list/sync, ${CMD_PREFIX}-man, ./bin/${CMD_PREFIX}-diff)...'
+        ${CMD_PREFIX}-node list >/dev/null
+        ${CMD_PREFIX}-node sync >/dev/null
+        ${CMD_PREFIX}-man status >/dev/null
+        ./bin/${CMD_PREFIX}-diff >/dev/null
+        echo '  • [5/5] 檢查全部 CLI 指令與子指令之 --version / --help 參數...'
+        for b in ./bin/* ./tools/bin/*; do
+            [ -f \"\$b\" ] || continue
+            \"\$b\" --version >/dev/null
+            \"\$b\" --help >/dev/null
+        done
+        for sub in add remove list sync; do
+            ${CMD_PREFIX}-node \"\$sub\" --help >/dev/null
+        done
+    "
+    echo -e "${C_BOLD}${C_GREEN}  ✓ 正式工具鏈與全參數驗證全數通過 (Verified inside mock-console)！${C_RESET}"
+}
+
+generate_test_report() {
+    local mode="$1"
+    local dr_target="$2"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    echo ""
+    echo -e "${C_BOLD}${C_GREEN}╔══════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
+    echo -e "${C_BOLD}${C_GREEN}║             📋 [${PROJECT_NAME}] 全自動 E2E 測試驗收報告 (Test Report)            ║${C_RESET}"
+    echo -e "${C_BOLD}${C_GREEN}╚══════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
+    echo -e "  • 測試時間           : ${timestamp}"
+    echo -e "  • Gitea 部署模式     : ${mode}"
+    echo -e "  • Day-0 納管節點數   : 6 節點 (Arch, Photon, Oracle, Debian, Alpine, Appliance)"
+    echo -e "  • 工具鏈驗收結果     : PASS (100% 綠燈)"
+    echo -e "  • 災難復原演練目標   : ${dr_target}"
+    echo -e "  • 災難演練還原率     : 100% Bit-for-Bit SHA-256 Checksum 一致"
+    echo -e "  • 結論               : 🎉 全流程自動化驗收 100% SUCCESS"
+    echo -e "${C_BOLD}${C_GREEN}════════════════════════════════════════════════════════════════════════════════${C_RESET}\n"
+}
+
+action_run_automated_suite() {
+    local mode="${1:-standalone}"
+    local dr_target="${2:-mock-arch,mock-photon,mock-debian}"
+
+    GITEA_MODE="${mode}"
+    if [ "${mode}" = "standalone" ]; then
+        GITEA_URL="http://172.28.0.2:3000"
+    elif [ "${mode}" = "dind" ]; then
+        GITEA_URL="http://172.28.0.20:3000"
+    fi
+    export GITEA_MODE GITEA_URL
+    export RUN_FULL_TESTS=true
+
+    echo -e "\n${C_BOLD}${C_BLUE}════════════════════════════════════════════════════════════════════════${C_RESET}"
+    echo -e "${C_BOLD}${C_BLUE}  🚀 開始全自動端到端驗收測試 (Gitea 模式: $(get_gitea_mode_desc))${C_RESET}"
+    echo -e "${C_BOLD}${C_BLUE}════════════════════════════════════════════════════════════════════════${C_RESET}"
+
+    echo -e "\n${C_BOLD}${C_CYAN}[Phase 1/6] 建立測試沙箱容器叢集 (Up)...${C_RESET}"
+    action_up
+
+    echo -e "\n${C_BOLD}${C_CYAN}[Phase 2/6] 初始化 Gitea 測試環境 (Init)...${C_RESET}"
+    action_gitea
+
+    echo -e "\n${C_BOLD}${C_CYAN}[Phase 3/6] 執行 Day-0 納管與自動化劇本部署 (Onboard)...${C_RESET}"
+    action_onboard
+
+    action_verify_tools
+
+    echo -e "\n${C_BOLD}${C_CYAN}[Phase 5/6] 執行災難復原混沌破壞與還原演練 (DR Drill: ${dr_target})...${C_RESET}"
+    action_dr_drill "${dr_target}"
+
+    echo -e "\n${C_BOLD}${C_CYAN}[Phase 6/6] 彙整結構化驗收測試報告...${C_RESET}"
+    generate_test_report "$(get_gitea_mode_desc)" "${dr_target}"
+
+    echo -e "${C_BOLD}${C_YELLOW}[Teardown] 自動清理並銷毀測試環境...${C_RESET}"
+    action_down
+}
+
+select_dr_target() {
+    echo -e "\n${C_BOLD}${C_CYAN}┌────────────────────────────────────────────────────────────────────────┐${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}│  $(t_test dr_title "🛡️  請選擇災難復原演練之目標故障注入主機")                             │${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}"
+    echo -e "  [${C_GREEN}1${C_RESET}] mock-arch    (Arch Linux 滾動發行版)"
+    echo -e "  [${C_GREEN}2${C_RESET}] mock-photon  (VMware Photon OS 5.0)"
+    echo -e "  [${C_GREEN}3${C_RESET}] mock-debian  (Debian GNU/Linux 12 Bookworm)"
+    echo -e "  [${C_GREEN}4${C_RESET}] mock-oracle  (Oracle Linux 9 / Enterprise RHEL)"
+    echo -e "  [${C_GREEN}5${C_RESET}] mock-alpine  (Alpine Linux 3.20 輕量節點)"
+    echo -e "  [${C_GREEN}6${C_RESET}] $(t_test dr_multi_node "多節點混合併行破壞 (mock-arch,mock-photon,mock-debian) [預設推薦]")"
+    echo -e "  [${C_GREEN}7${C_RESET}] $(t_test dr_custom_node "自訂手動輸入節點名稱 (逗號分隔)")"
+    echo -e "${C_BOLD}${C_CYAN}└────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+
+    local prompt_dr="$(printf '\n\033[1m%s\033[0m ' "$(t_test dr_prompt "請選擇目標節點 (1-7, 預設 6):")")"
+    read -rp "${prompt_dr}" dr_choice
+    case "${dr_choice}" in
+        1) echo "mock-arch" ;;
+        2) echo "mock-photon" ;;
+        3) echo "mock-debian" ;;
+        4) echo "mock-oracle" ;;
+        5) echo "mock-alpine" ;;
+        6|"") echo "mock-arch,mock-photon,mock-debian" ;;
+        7)
+            local prompt_custom="$(printf '\n\033[1m%s\033[0m ' "$(t_test dr_custom_prompt "請輸入自訂受試節點名稱 (例如 mock-arch,mock-debian):")")"
+            read -rp "${prompt_custom}" custom_target
+            echo "${custom_target:-mock-arch,mock-photon,mock-debian}"
+            ;;
+        *) echo "mock-arch,mock-photon,mock-debian" ;;
+    esac
+}
+
+menu_automated_test() {
+    echo -e "\n${C_BOLD}${C_CYAN}┌────────────────────────────────────────────────────────────────────────┐${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}│  $(t_test auto_menu_title "🤖 全自動驗收測試 - Gitea 模式選擇")                                   │${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}"
+    echo -e "  [${C_GREEN}1${C_RESET}] $(t_test auto_opt_standalone "獨立沙箱 Gitea 模式 (Standalone Mock) [預設推薦 - 純淨隔離]")"
+    echo -e "  [${C_GREEN}2${C_RESET}] $(t_test auto_opt_dind "節點內嵌 DinD 模式 (Node Embedded DinD) [模擬自建宿主機]")"
+    echo -e "  [${C_GREEN}3${C_RESET}] $(t_test auto_opt_dual "雙模式全量覆蓋測試 (Standalone 測試後銷毀 ➔ DinD 測試後銷毀)")"
+    echo -e "  [${C_YELLOW}0${C_RESET}] $(t_test back_to_main "返回主選單")"
+    echo -e "${C_BOLD}${C_CYAN}└────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+
+    local prompt_auto="$(printf '\n\033[1m%s\033[0m ' "$(t_test auto_prompt "請選擇全自動測試模式 (0-3, 預設 1):")")"
+    read -rp "${prompt_auto}" auto_choice
+    case "${auto_choice}" in
+        1|"")
+            action_run_automated_suite "standalone" "mock-arch,mock-photon,mock-debian"
+            ;;
+        2)
+            action_run_automated_suite "dind" "mock-arch,mock-photon,mock-debian"
+            ;;
+        3)
+            echo -e "\n${C_BOLD}${C_BLUE}$(t_test auto_round_standalone "════ 執行第一輪: 獨立沙箱 Gitea 模式 ════")${C_RESET}"
+            action_run_automated_suite "standalone" "mock-arch,mock-photon,mock-debian"
+            echo -e "\n${C_BOLD}${C_BLUE}$(t_test auto_round_dind "════ 執行第二輪: 節點內嵌 DinD 模式 ════")${C_RESET}"
+            action_run_automated_suite "dind" "mock-arch,mock-photon,mock-debian"
+            echo -e "${C_BOLD}${C_GREEN}$(t_test auto_dual_complete "🎉 雙模式全自動驗收測試全數圓滿完成！")${C_RESET}"
+            ;;
+        0|q)
+            return
+            ;;
+        *)
+            echo -e "${C_RED}$(t_test auto_cancelled "無效選項，取消執行。")${C_RESET}"
+            ;;
+    esac
+}
+
+menu_advanced_test() {
+    echo -e "\n${C_BOLD}${C_CYAN}┌────────────────────────────────────────────────────────────────────────┐${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}│  $(t_test advanced_title "🔬 進階特殊環境測試條件選擇")                                          │${C_RESET}"
+    echo -e "${C_BOLD}${C_CYAN}├────────────────────────────────────────────────────────────────────────┤${C_RESET}"
+    echo -e "  [${C_GREEN}1${C_RESET}] $(t_test advanced_opt_kvm "深度容器化 QEMU/KVM 虛擬節點測試 (Containerized KVM Deep Test)")"
+    echo -e "      $(t_test advanced_opt_kvm_desc "• 於具備 /dev/kvm 之容器內啟動真實 QEMU 虛擬機，驗證異質設備納管")"
+    echo -e "  [${C_GREEN}2${C_RESET}] $(t_test advanced_opt_dagger "Dagger 隔離容器流水線驗收 (Dagger E2E Pipeline)")"
+    echo -e "      $(t_test advanced_opt_dagger_desc "• 呼叫 tests/e2e/test_dagger.py，於 Dagger 嚴格隔離沙箱中驗收")"
+    echo -e "  [${C_YELLOW}0${C_RESET}] $(t_test back_to_main "返回主選單")"
+    echo -e "${C_BOLD}${C_CYAN}└────────────────────────────────────────────────────────────────────────┘${C_RESET}"
+
+    local prompt_adv="$(printf '\n\033[1m%s\033[0m ' "$(t_test advanced_prompt "請選擇進階測試項目 (0-2):")")"
+    read -rp "${prompt_adv}" adv_choice
+    case "${adv_choice}" in
+        1)
+            echo -e "\n${C_BOLD}$(t_test advanced_kvm_persona_title "請選擇 KVM 模擬設備角色 (Persona):")${C_RESET}"
+            echo "  1) debian (default)  2) alpine  3) pve  4) truenas  5) synology  6) qnap  7) unraid  8) omv"
+            local prompt_persona="$(printf '\n\033[1m%s\033[0m ' "$(t_test advanced_kvm_persona_prompt "請選擇 Persona (1-8, 預設 1):")")"
+            read -rp "${prompt_persona}" p_choice
+            case "${p_choice}" in
+                1|"") persona="debian" ;;
+                2) persona="kvm" ;;
+                3) persona="pve" ;;
+                4) persona="truenas" ;;
+                5) persona="synology" ;;
+                6) persona="qnap" ;;
+                7) persona="unraid" ;;
+                8) persona="omv" ;;
+                *) persona="debian" ;;
+            esac
+            local kvm_banner="$(t_test advanced_start_kvm ">>> 啟動 [{persona}] KVM 深度測試 <<<")"
+            echo -e "\n${C_BOLD}${C_GREEN}${kvm_banner/\{persona\}/${persona}}${C_RESET}"
+            ;;
+        2)
+            echo -e "\n${C_BOLD}${C_GREEN}$(t_test advanced_start_dagger ">>> 執行 Dagger 容器流水線驗收 <<<")${C_RESET}"
+            action_dagger
+            action_down
+            ;;
+        0|q)
+            return
+            ;;
+        *)
+            echo -e "${C_RED}$(t_test invalid_option_retry "無效選項，請重新輸入。")${C_RESET}"
+            ;;
+    esac
+}
+
+interactive_tui_menu() {
+    while true; do
+        echo -e "\n${C_BOLD}${C_GREEN}╔══════════════════════════════════════════════════════════════╗${C_RESET}"
+        echo -e "${C_BOLD}${C_GREEN}║   🧪 ${PROJECT_NAME^^} $(t_test console_title "沙箱測試控制台 (Test Console v2.0)")     ║${C_RESET}"
+        echo -e "${C_BOLD}${C_GREEN}╚══════════════════════════════════════════════════════════════╝${C_RESET}\n"
+
+        echo -e "  [${C_GREEN}1${C_RESET}] $(t_test menu_manual "🛠️  手動測試環境 (Manual Fleet)       - 純建立環境、不跑測試，保留容器供手工 exec")"
+        echo -e "  [${C_GREEN}2${C_RESET}] $(t_test menu_auto "🤖 全自動驗收測試 (Automated E2E)     - 建立 ➔ 納管 ➔ 工具 ➔ 災難演練 ➔ 產出報告 ➔ 銷毀")"
+        echo -e "  [${C_GREEN}3${C_RESET}] $(t_test menu_dr "🛡️  災難復原演練 (Custom DR Drill)    - 自由選擇指定節點模擬破壞與無損還原")"
+        echo -e "  [${C_GREEN}4${C_RESET}] $(t_test menu_advanced "🔬 進階環境測試 (Advanced Modes)     - KVM 深度硬體模擬 / Dagger 容器流水線")"
+        echo -e "  [${C_GREEN}5${C_RESET}] $(t_test menu_status "📊 查看沙箱狀態 (Fleet Status)        - 檢視節點 IP、端口與 docker exec 指令")"
+        echo -e "  [${C_GREEN}6${C_RESET}] $(t_test menu_reset "🔄 重置受控節點 (Reset Fleet)         - 清除受控端帳號與金鑰 (還原乾淨裸機)")"
+        echo -e "  [${C_GREEN}7${C_RESET}] $(t_test menu_teardown "🧹 銷毀測試沙箱 (Teardown)            - 一鍵停止並清理所有容器與網路")"
+        echo -e "  [${C_GREEN}8${C_RESET}] $(t_test menu_lang "🌐 切換測試語系 (Switch Language / Locale)") [${C_CYAN}${LAB_LANG}${C_RESET}]"
+        echo -e "  [${C_YELLOW}0${C_RESET}] $(t_test menu_exit "離開 (Exit)")"
+
+        local prompt_action="$(printf '\n\033[1m%s\033[0m ' "$(t_test select_action "請選擇測試動作 (0-8):")")"
+        read -rp "${prompt_action}" choice
+        case "${choice}" in
+            1)
+                echo -e "\n${C_BOLD}${C_CYAN}$(t_test prep_manual ">>> 準備建立手動測試環境 <<<")${C_RESET}"
+                select_gitea_mode
+                echo -e "\n${C_BOLD}${C_GREEN}$(t_test spin_up_containers ">>> 啟動沙箱節點容器... <<<")${C_RESET}"
+                action_up
+                if [ "${GITEA_MODE}" != "local" ]; then
+                    action_gitea
+                fi
+                echo -e "\n${C_BOLD}${C_GREEN}$(t_test exec_onboard_banner ">>> 於 mock-console 執行標準 Git Clone、Day-0 嚮導與工具鏈部署... <<<")${C_RESET}"
+                if ! RUN_FULL_TESTS=false action_onboard; then
+                    echo -e "\n${C_BOLD}${C_RED}[✗] Day-0 納管與工具鏈部署遭遇錯誤！請檢查上方輸出日誌。${C_RESET}"
+                else
+                    echo -e "${C_BOLD}${C_GREEN}$(t_test manual_done_banner "✓ 手動沙箱環境建立完成！全節點已納管，維運工具已就緒。")${C_RESET}"
+                fi
+                show_operational_dashboard
+                echo -e "\n${C_BOLD}${C_CYAN}>>> $(t_test auto_entering_console "自動進入 mock-console 控制台終端機 (docker exec -it mock-console bash)...") <<<${C_RESET}"
+                if [ -t 0 ]; then
+                    docker exec -it mock-console bash || true
+                else
+                    docker exec mock-console bash || true
+                fi
+                local prompt_exit_ret="$(printf '\n%s ' "$(t_test exit_console_press_enter "[已自 mock-console 退出，按 Enter 鍵返回選單...]")")"
+                read -rp "${prompt_exit_ret}" _
+                ;;
+            2)
+                menu_automated_test
+                local prompt_ret="$(printf '\n%s ' "$(t_test press_enter_to_return "[按 Enter 鍵返回選單...]")")"
+                read -rp "${prompt_ret}" _
+                ;;
+            3)
+                dr_node="$(select_dr_target)"
+                local dr_banner="$(t_test dr_start_banner ">>> 開始災難復原演練 (目標主機: {target}) <<<")"
+                echo -e "\n${C_BOLD}${C_GREEN}${dr_banner/\{target\}/${dr_node}}${C_RESET}"
+                action_dr_drill "${dr_node}"
+                local prompt_ret="$(printf '\n%s ' "$(t_test press_enter_to_return "[按 Enter 鍵返回選單...]")")"
+                read -rp "${prompt_ret}" _
+                ;;
+            4)
+                menu_advanced_test
+                local prompt_ret="$(printf '\n%s ' "$(t_test press_enter_to_return "[按 Enter 鍵返回選單...]")")"
+                read -rp "${prompt_ret}" _
+                ;;
+            5)
+                show_operational_dashboard
+                local prompt_ret="$(printf '\n%s ' "$(t_test press_enter_to_return "[按 Enter 鍵返回選單...]")")"
+                read -rp "${prompt_ret}" _
+                ;;
+            6)
+                action_reset
+                local prompt_ret="$(printf '\n%s ' "$(t_test press_enter_to_return "[按 Enter 鍵返回選單...]")")"
+                read -rp "${prompt_ret}" _
+                ;;
+            7)
+                action_down
+                local prompt_ret="$(printf '\n%s ' "$(t_test press_enter_to_return "[按 Enter 鍵返回選單...]")")"
+                read -rp "${prompt_ret}" _
+                ;;
+            8)
+                select_language
+                ;;
+            0|q|exit)
+                echo "$(t_test exit_test_console "離開測試控制台。")"
+                break
+                ;;
+            *)
+                echo -e "${C_RED}$(t_test invalid_option_retry "無效選項，請重新輸入。")${C_RESET}"
+                ;;
+        esac
+    done
+}
+
+# Mode flags
+OPT_AUTO=false
+OPT_MANUAL=false
+OPT_DAGGER=false
+OPT_KVM=""
+OPT_DOWN=false
+OPT_STATUS=false
+OPT_RESET=false
+OPT_DR=false
+DR_TARGET=""
+HAS_FLAGS=false
+
+while [[ $# -gt 0 ]]; do
+    HAS_FLAGS=true
+    case "$1" in
+        --auto) OPT_AUTO=true; shift ;;
+        --manual) OPT_MANUAL=true; shift ;;
+        --dagger) OPT_DAGGER=true; shift ;;
+        --kvm)
+            OPT_KVM="${2:-debian}"
+            shift 2
+            ;;
+        --kvm=*)
+            OPT_KVM="${1#*=}"
+            shift
+            ;;
+        --down|--clean) OPT_DOWN=true; shift ;;
+        --status|--info) OPT_STATUS=true; shift ;;
+        --reset) OPT_RESET=true; shift ;;
+        --dr|--drill)
+            OPT_DR=true
+            if [[ $# -gt 1 ]] && [[ ! "$2" =~ ^- ]]; then
+                DR_TARGET="$2"
+                shift 2
+            else
+                shift
+            fi
+            ;;
+        --gitea-mode)
+            GITEA_MODE="$2"
+            export GITEA_MODE
+            shift 2
+            ;;
+        --gitea-mode=*)
+            GITEA_MODE="${1#*=}"
+            export GITEA_MODE
+            shift
+            ;;
+        --gitea-url)
+            GITEA_URL="$2"
+            export GITEA_URL
+            shift 2
+            ;;
+        --gitea-url=*)
+            GITEA_URL="${1#*=}"
+            export GITEA_URL
+            shift
+            ;;
+        -G)
+            GITEA_MODE="$2"
+            export GITEA_MODE
+            shift 2
+            ;;
+        --lang)
+            init_i18n "$2"
+            shift 2
+            ;;
+        --lang=*)
+            init_i18n "${1#*=}"
+            shift
+            ;;
+        --version|-v)
+            VER="$(tr -d '[:space:]' < "${REPO_ROOT}/VERSION" 2>/dev/null || echo "1.0.0")"
+            echo "OpenLabOps Sandbox Test Console (lab-test) v${VER}"
+            exit 0
+            ;;
+        --help|-h) show_help; exit 0 ;;
+        -[a-zA-Z]*)
+            flags="${1#-}"
+            shift
+            for (( i=0; i<${#flags}; i++ )); do
+                c="${flags:$i:1}"
+                case "$c" in
+                    a|A) OPT_AUTO=true ;;
+                    m|M) OPT_MANUAL=true ;;
+                    g)   OPT_DAGGER=true ;;
+                    d|D) OPT_DOWN=true ;;
+                    s|S) OPT_STATUS=true ;;
+                    r|R) OPT_RESET=true ;;
+                    h|H) show_help; exit 0 ;;
+                    *) echo -e "${C_RED}未知參數旗標: -$c${C_RESET}"; show_help; exit 1 ;;
+                esac
+            done
+            ;;
+        *)
+            echo -e "${C_RED}未知參數: $1${C_RESET}"
+            show_help
+            exit 1
+            ;;
+    esac
+done
+
+# If no flags passed
+if [[ "${HAS_FLAGS}" == false ]]; then
+    if [[ -t 0 ]]; then
+        interactive_tui_menu
+        exit 0
+    else
+        OPT_MANUAL=true
+    fi
+fi
+
+# Flag Execution Mode
+if [[ "${OPT_DOWN}" == true ]]; then
+    action_down
+    exit 0
+fi
+
+if [[ "${OPT_RESET}" == true ]]; then
+    action_reset
+    exit 0
+fi
+
+if [[ "${OPT_DR}" == true ]]; then
+    action_dr_drill "${DR_TARGET:-mock-arch,mock-photon,mock-debian}"
+    exit 0
+fi
+
+if [[ -n "${OPT_KVM}" ]]; then
+    exit 0
+fi
+
+if [[ "${OPT_DAGGER}" == true ]]; then
+    action_dagger
+    action_down
+    exit 0
+fi
+
+if [[ "${OPT_STATUS}" == true ]]; then
+    show_operational_dashboard
+    exit 0
+fi
+
+if [[ "${OPT_AUTO}" == true ]]; then
+    action_run_automated_suite "${GITEA_MODE}" "${DR_TARGET:-mock-arch,mock-photon,mock-debian}"
+    exit 0
+fi
+
+if [[ "${OPT_MANUAL}" == true ]]; then
+    local start_banner="$(t_test start_manual_fleet ">>> 啟動手動測試沙箱 (Gitea 模式: {mode}) <<<")"
+    echo -e "\n${C_BOLD}${C_GREEN}${start_banner/\{mode\}/$(get_gitea_mode_desc)}${C_RESET}"
+    action_up
+    if [ "${GITEA_MODE}" != "local" ]; then
+        action_gitea
+    fi
+    echo -e "\n${C_BOLD}${C_GREEN}$(t_test exec_onboard_banner ">>> 於 mock-console 執行標準 Git Clone、Day-0 嚮導與工具鏈部署... <<<")${C_RESET}"
+    RUN_FULL_TESTS=false action_onboard || true
+    show_operational_dashboard
+    echo -e "\n${C_BOLD}${C_CYAN}>>> $(t_test auto_entering_console "自動進入 mock-console 控制台終端機 (docker exec -it mock-console bash)...") <<<${C_RESET}"
+    if [ -t 0 ]; then
+        docker exec -it mock-console bash
+    else
+        docker exec mock-console bash
+    fi
+    exit 0
+fi

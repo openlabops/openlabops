@@ -1,0 +1,96 @@
+---
+# ==============================================================================
+# Task: deploy_node.yml
+# 節點綜合 SSH 金鑰部署 (Authorized Keys、Client Keys、SSH Config)
+# ==============================================================================
+- name: 設定目標使用者家目錄與路徑
+  ansible.builtin.set_fact:
+    target_user_home: "{{ ('/home/' + ssh_keys_admin_user) if ssh_keys_admin_user != 'root' else '/root' }}"
+
+- name: 確保目標主機使用者 SSH 目錄安全 (0700)
+  ansible.builtin.file:
+    path: "{{ target_user_home }}/.ssh"
+    state: directory
+    owner: "{{ ssh_keys_admin_user }}"
+    group: "{{ ssh_keys_admin_user }}"
+    mode: '0700'
+
+# ------------------------------------------------------------------------------
+# 1. 部署 Authorized Keys (受控公鑰寫入 authorized_keys)
+# ------------------------------------------------------------------------------
+- name: 讀取管理員公鑰內容 ({{ ssh_keys_admin_key_name }}.pub)
+  ansible.builtin.slurp:
+    src: "{{ resolved_secrets_dir }}/ssh-key/{{ ssh_keys_admin_key_name }}.pub"
+  delegate_to: localhost
+  become: false
+  register: admin_pub_b64
+  when: ssh_keys_deploy_authorized_keys and resolved_secrets_dir != ''
+
+- name: 部署管理員公鑰至 {{ ssh_keys_admin_user }} authorized_keys
+  ansible.posix.authorized_key:
+    user: "{{ ssh_keys_admin_user }}"
+    state: present
+    key: "{{ admin_pub_b64.content | b64decode | trim }}"
+    key_options: "{{ ssh_keys_admin_options }}"
+    comment: "{{ ssh_keys_admin_key_name }}-master"
+  when: ssh_keys_deploy_authorized_keys and admin_pub_b64.content is defined
+
+- name: 讀取自動化公鑰內容 ({{ ssh_keys_automation_key_name }}.pub)
+  ansible.builtin.slurp:
+    src: "{{ resolved_secrets_dir }}/ssh-key/{{ ssh_keys_automation_key_name }}.pub"
+  delegate_to: localhost
+  become: false
+  register: auto_pub_b64
+  when: ssh_keys_deploy_authorized_keys and resolved_secrets_dir != ''
+
+- name: 部署自動化公鑰至 {{ ssh_keys_automation_user }} authorized_keys
+  ansible.posix.authorized_key:
+    user: "{{ ssh_keys_automation_user }}"
+    state: present
+    key: "{{ auto_pub_b64.content | b64decode | trim }}"
+    key_options: "{{ ssh_keys_automation_options }}"
+    comment: "{{ ssh_keys_automation_key_name }}-automation"
+  when: ssh_keys_deploy_authorized_keys and auto_pub_b64.content is defined
+  failed_when: false
+
+# ------------------------------------------------------------------------------
+# 2. 部署受控管理端私鑰與公鑰 (Client Keys)
+# ------------------------------------------------------------------------------
+- name: 複製管理端金鑰至目標主機 ~/.ssh/
+  ansible.builtin.copy:
+    src: "{{ resolved_secrets_dir }}/ssh-key/{{ item }}"
+    dest: "{{ target_user_home }}/.ssh/{{ item }}"
+    owner: "{{ ssh_keys_admin_user }}"
+    group: "{{ ssh_keys_admin_user }}"
+    mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
+  loop: "{{ ssh_keys_managed_client_keys }}"
+  when: ssh_keys_deploy_client_keys and resolved_secrets_dir != ''
+
+# ------------------------------------------------------------------------------
+# 3. 部署標準 ~/.ssh/config 連線組態
+# ------------------------------------------------------------------------------
+- name: 複製標準 SSH Config 至目標主機 ~/.ssh/config
+  ansible.builtin.copy:
+    src: "{{ resolved_configs_dir }}/ssh-config/{{ ssh_keys_config_profile }}/config"
+    dest: "{{ target_user_home }}/.ssh/config"
+    owner: "{{ ssh_keys_admin_user }}"
+    group: "{{ ssh_keys_admin_user }}"
+    mode: '0600'
+    backup: yes
+  when: ssh_keys_deploy_ssh_config and resolved_configs_dir != ''
+
+# ------------------------------------------------------------------------------
+# 4. 部署完成資訊
+# ------------------------------------------------------------------------------
+- name: 輸出 SSH 金鑰部署摘要
+  ansible.builtin.debug:
+    msg:
+      - "=========================================================================="
+      - "✅ [SUCCESS] SSH 金鑰已成功部署至節點: {{ inventory_hostname }} ({{ ansible_host }})"
+      - "=========================================================================="
+      - "目標使用者: {{ ssh_keys_admin_user }}"
+      - "Authorized Keys 更新: {{ ssh_keys_deploy_authorized_keys }}"
+      - "Client Management Keys 更新: {{ ssh_keys_deploy_client_keys }}"
+      - "SSH Config 更新: {{ ssh_keys_deploy_ssh_config }} (Profile: {{ ssh_keys_config_profile }})"
+      - "金鑰安全權限: 私鑰 0600 / 公鑰 0644 / .ssh 目錄 0700"
+      - "=========================================================================="

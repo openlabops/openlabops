@@ -1,0 +1,57 @@
+# ==============================================================================
+# OpenLabOps Site Configuration Manifest (conf/openlab.manifest.yml)
+# USER-EDITABLE CLUSTER TOPOLOGY & SITE DECLARATION (FLAT LAN & GENERIC LINUX)
+# ==============================================================================
+
+# 1. Cluster Identity & Environment
+cluster:
+  name: "OpenLab"
+  domain: "lab"
+  admin_user: "labadmin"
+  ansible_user: "ansible"
+  timezone: "UTC"
+  locale: "en_US.UTF-8"
+
+# 2. Local Gitea / GitOps Platform Instance
+git_platform:
+  host: "gitea.lab"
+  ip: "192.168.1.90"
+  ssh_port: 22
+  http_port: 3000
+  org: "OpenLabOps"
+  repo_prefix: "openlab"
+
+# 3. Canonical Semantic Keys Mapping
+keys:
+  ansible: "ansible.key"                    # Automated Ansible management key
+  user: "id_user.key"                       # Admin operator interactive key
+  git: "git.key"                            # Version control Git access key
+
+# 4. Network Definition (Flat LAN)
+networks:
+  flat_lan: "192.168.1.0/24"
+  service_lan: "192.168.1.0/24"
+  gateway_ip: "192.168.1.1"
+  dns_servers:
+    - "192.168.1.1"
+
+# 5. Core Platform Services
+services:
+  gitea:
+    ip: "192.168.1.90"
+    http_port: 3000
+    ssh_port: 22
+  docker_host:
+    host: "localhost"
+    ssh_user: "labadmin"
+    ssh_port: 22
+
+# 6. Initial Node Telemetry / Inventory (Populated via lab-init or lab-node add)
+inventory:
+  dev:
+    hosts:
+      localhost:
+        ansible_host: "127.0.0.1"
+  servers:
+    hosts: {}
+

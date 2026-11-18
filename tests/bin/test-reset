@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Atomic Test Helper: Reset Managed Nodes to Clean Day-0 State
+# File: tests/bin/test-reset
+# ==============================================================================
+set -euo pipefail
+
+echo "[•] Resetting target nodes' automation accounts and authorized_keys..."
+for node in mock-arch mock-photon mock-oracle mock-debian mock-alpine; do
+    docker exec "$node" sh -c "userdel -r ansible 2>/dev/null || deluser ansible 2>/dev/null || true; userdel -r lab 2>/dev/null || deluser lab 2>/dev/null || true; rm -rf /home/ansible /home/lab /etc/sudoers.d/ansible /etc/sudoers.d/99-ansible /etc/sudoers.d/zz-ansible /etc/sudoers.d/lab /etc/sudoers.d/99-lab /etc/sudoers.d/zz-lab; rm -f /home/labadmin/.ssh/authorized_keys /root/.ssh/authorized_keys" >/dev/null 2>&1 || true
+    echo "  • Node $node reset to clean Day-0 [✓]"
+done
+echo "[✓] All managed nodes reset to initial state without tearing down containers."
+

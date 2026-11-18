@@ -1,0 +1,72 @@
+---
+# ==============================================================================
+# 單一使用者配置子任務: {{ user_item.name }}
+# 支援外部直接注入公鑰字串 (pub_key_content) 或透過檔案路徑載入 (pub_key_path)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. 建立或維護系統帳號
+# ------------------------------------------------------------------------------
+- name: "建立/確保系統使用者帳號 ({{ user_item.name }})"
+  ansible.builtin.user:
+    name: "{{ user_item.name }}"
+    state: "{{ user_item.state | default('present') }}"
+    shell: "{{ user_item.shell | default(users_default_shell) }}"
+    create_home: "{{ user_item.create_home | default(true) }}"
+
+- name: "配置使用者 Sudoers 規則 (Linux: {{ user_item.name }})"
+  ansible.builtin.copy:
+    dest: "/etc/sudoers.d/zz-{{ user_item.name }}"
+    content: "{{ user_item.sudoers_rule }}\n"
+    mode: '0440'
+    validate: 'visudo -cf %s'
+  when:
+    - user_item.sudoers_rule is defined
+    - (user_item.sudoers_rule | length) > 0
+
+# ------------------------------------------------------------------------------
+# 2. 解析 SSH 公鑰內容 (優先使用直接傳入之字串，備選探測候選路徑)
+# ------------------------------------------------------------------------------
+- name: "探測公鑰檔案路徑 ({{ user_item.name }})"
+  ansible.builtin.stat:
+    path: "{{ item }}"
+  delegate_to: localhost
+  become: false
+  loop:
+    - "{{ user_item.pub_key_path | default('/nonexistent') }}"
+    - "{{ lookup('env', 'HOME') + '/.ssh/' + user_item.name + '.pub' }}"
+    - "/tmp/openlab-secrets/ssh-key/{{ user_item.name }}.pub"
+    - "{{ users_secrets_dir }}/ssh-key/{{ user_item.name }}.pub"
+  register: detected_pub_candidates
+  when: (user_item.pub_key_content | default('')) == ''
+
+- name: "確定公鑰實際路徑 ({{ user_item.name }})"
+  ansible.builtin.set_fact:
+    resolved_user_pub_path: "{{ (detected_pub_candidates.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+  when: (user_item.pub_key_content | default('')) == ''
+
+- name: "讀取公鑰內容 ({{ user_item.name }})"
+  ansible.builtin.slurp:
+    src: "{{ resolved_user_pub_path }}"
+  register: slurped_pub_key
+  delegate_to: localhost
+  become: false
+  when:
+    - (user_item.pub_key_content | default('')) == ''
+    - resolved_user_pub_path != ''
+  failed_when: false
+
+- name: "確定最終注入之公鑰內容 ({{ user_item.name }})"
+  ansible.builtin.set_fact:
+    final_pub_key_str: "{{ user_item.pub_key_content if (user_item.pub_key_content | default('')) != '' else (slurped_pub_key.content | b64decode | trim) if (slurped_pub_key is defined and slurped_pub_key.content is defined) else '' }}"
+
+# ------------------------------------------------------------------------------
+# 3. 部署 authorized_keys
+# ------------------------------------------------------------------------------
+- name: "部署 SSH 公鑰至 /home/{{ user_item.name }}/.ssh/authorized_keys"
+  ansible.posix.authorized_key:
+    user: "{{ user_item.name }}"
+    state: present
+    key: "{{ final_pub_key_str }}"
+    key_options: "{{ user_item.key_options | default(omit) }}"
+  when: final_pub_key_str != ''

@@ -1,0 +1,39 @@
+---
+# ==============================================================================
+# Playbook: Install Git Post-Push Hook for Docker Compose Repositories
+# Target:
+#   - photonos hosts: /home/labadmin/docker-compose/.git/hooks/post-push
+#   - server hosts/.git/hooks/post-push
+# ==============================================================================
+- name: Install Git Post-Push Hook in Docker Compose Repositories
+  hosts: servers
+  gather_facts: false
+
+  tasks:
+    - name: 檢查目標 docker-compose 專案目錄與 .git 是否存在
+      ansible.builtin.stat:
+        path: "{{ docker_compose_dir }}/.git"
+      register: git_dir_stat
+
+    - name: 確保 .git/hooks 目錄存在
+      ansible.builtin.file:
+        path: "{{ docker_compose_dir }}/.git/hooks"
+        state: directory
+        mode: '0755'
+      when: git_dir_stat.stat.exists
+      become: "{{ true if os_family == 'OracleLinux' else false }}"
+
+    - name: 複製 post-push hook 腳本至 .git/hooks/post-push 並賦予執行權限
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/post-push-trigger.sh"
+        dest: "{{ docker_compose_dir }}/.git/hooks/post-push"
+        mode: '0755'
+      when: git_dir_stat.stat.exists
+      register: copy_hook_res
+      become: "{{ true if os_family == 'OracleLinux' else false }}"
+
+    - name: 輸出 Hook 腳本安裝結果
+      ansible.builtin.debug:
+        msg: >-
+          Host {{ inventory_hostname }} ({{ ansible_host }} | {{ os_family }}):
+          {{ 'Successfully installed post-push hook at ' + docker_compose_dir + '/.git/hooks/post-push' if git_dir_stat.stat.exists else 'Skipped: ' + docker_compose_dir + '/.git directory not found' }}

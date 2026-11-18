@@ -1,0 +1,47 @@
+---
+# ==============================================================================
+# Playbook: Declarative Node File Restore & Deploy (Configs Repo -> Node)
+# Target: {{ target | default('all') }}
+# Purpose:
+#   Restores/deploys files from configs repository back to the target node
+#   based on the `backup` / `dotfiles` list variable (`item.src`, `item.dest`, `item.mode`, etc.).
+#   Unified engine for backup restoration and dotfiles deployment.
+# ==============================================================================
+- name: Declarative Node File Restore & Dotfiles Deployment
+  hosts: "{{ target | default(target_hosts | default('all')) }}"
+  gather_facts: false
+  become: true
+
+  vars:
+    app_prefix: "{{ repo_prefix | default('openlab') }}"
+    configs_repo_dir: "{{ host_configs_dir | default(custom_configs_root | default(lookup('env', 'HOME') + '/' + app_prefix + '-configs')) }}"
+    file_sync_list: "{{ (backup | from_yaml) if (backup is defined and backup is string) else (backup | default(dotfiles | default([]))) }}"
+
+  tasks:
+    - name: Ensure target parent directory exists on node
+      ansible.builtin.file:
+        path: "{{ item.src | dirname }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ file_sync_list }}"
+      when:
+        - item.src is defined and item.src | length > 0
+        - item.dest is defined and item.dest | length > 0
+
+    - name: Deploy / Restore files back to target node
+      ansible.builtin.copy:
+        src: >-
+          {{
+            lookup('ansible.builtin.first_found', dict(
+              files=[inventory_hostname ~ '/' ~ item.dest, item.dest],
+              paths=[configs_repo_dir]
+            ))
+          }}
+        dest: "{{ item.src }}"
+        owner: "{{ item.owner | default(omit) }}"
+        group: "{{ item.group | default(omit) }}"
+        mode: "{{ item.mode | default(omit) }}"
+      loop: "{{ file_sync_list }}"
+      when:
+        - item.src is defined and item.src | length > 0
+        - item.dest is defined and item.dest | length > 0

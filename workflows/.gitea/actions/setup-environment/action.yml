@@ -1,0 +1,37 @@
+name: "Setup Alpine Runner Environment"
+description: "Prepares Alpine-based Gitea Actions runner with required system packages and OpenSSH configurations"
+inputs:
+  packages:
+    description: "Space-separated packages to install via apk"
+    required: false
+    default: "git openssh-client ansible rsync python3 py3-pip"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install System Dependencies
+      shell: sh
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        echo "🔧 [Action: setup-environment] Checking system dependencies..."
+        if ! command -v git >/dev/null 2>&1 || ! command -v ssh >/dev/null 2>&1 || ! command -v ansible-playbook >/dev/null 2>&1 || ! command -v rsync >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+          if command -v apk >/dev/null 2>&1; then
+            if [ "$(id -u)" -eq 0 ]; then
+              # shellcheck disable=SC2086
+              apk add --no-cache $PACKAGES
+            elif command -v sudo >/dev/null 2>&1; then
+              # shellcheck disable=SC2086
+              sudo apk add --no-cache $PACKAGES
+            fi
+          fi
+        fi
+
+    - name: Configure Secure SSH Client Defaults
+      shell: sh
+      run: |
+        echo "🔑 [Action: setup-environment] Configuring OpenSSH client defaults..."
+        mkdir -p ~/.ssh
+        chmod 700 ~/.ssh
+        printf "Host *\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile /dev/null\n  LogLevel ERROR\n" > ~/.ssh/config
+        chmod 600 ~/.ssh/config

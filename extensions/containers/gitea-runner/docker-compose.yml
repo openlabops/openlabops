@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  act_runner:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: openlab-act-runner
+    restart: unless-stopped
+    environment:
+      - GITEA_INSTANCE_URL=${GITEA_INSTANCE_URL:-http://gitea.lab:3000}
+      - GITEA_RUNNER_REGISTRATION_TOKEN=${GITEA_RUNNER_REGISTRATION_TOKEN}
+      - GITEA_RUNNER_NAME=${GITEA_RUNNER_NAME:-openlab-act-runner}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./data:/data
+

@@ -1,0 +1,123 @@
+---
+# ==============================================================================
+# Playbook: Update Node Information Documentation (Audit & Sync)
+# Target: servers,hypervisors (or override via --extra-vars "target_hosts=...")
+# Architecture:
+#   - 資料層 (SSOT): 輸出純淨、結構化之 JSON (node_<hostname>.json) 至 openlab-configs
+#   - 表現層 (View): 透過 render_node_doc.py 轉換為美觀 Markdown 同步至 Private-Vault
+# ==============================================================================
+- name: 全網伺服器狀態即時審計與節點手冊更新 (Linux)
+  hosts: "{{ target_servers | default('servers') }}"
+
+  gather_facts: false
+  become: false
+
+  vars:
+    configs_docs_dir: "{{ host_configs_dir | default(lookup('env', 'HOME') + '/openlab-configs/node-information') }}"
+    alt_configs_docs_dir: "/tmp/openlab-configs/node-information"
+    private_vault_dir: "{{ lookup('env', 'HOME') }}/Private-Vault/80_Raw_Data/Homelab/Node Information"
+
+  pre_tasks:
+    # --------------------------------------------------------------------------
+    # 0. 本地環境偵測 (openlab-configs 與 Private-Vault 目錄)
+    # --------------------------------------------------------------------------
+    - name: 檢查 openlab-configs 目錄位置
+      ansible.builtin.stat:
+        path: "{{ configs_docs_dir }}"
+      register: configs_stat
+      delegate_to: localhost
+      run_once: true
+
+    - name: 檢查 Private-Vault 目錄是否存在
+      ansible.builtin.stat:
+        path: "{{ private_vault_dir }}"
+      register: vault_stat
+      delegate_to: localhost
+      run_once: true
+
+    - name: 決定 openlab-configs 寫入目標
+      ansible.builtin.set_fact:
+        final_configs_dir: "{{ configs_docs_dir if (configs_stat.stat.exists | default(false)) else alt_configs_docs_dir }}"
+        vault_exists: "{{ vault_stat.stat.exists | default(false) }}"
+      delegate_to: localhost
+      run_once: true
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. 部署對應 OS 的審計收集腳本至遠端 /tmp
+    # --------------------------------------------------------------------------
+    - name: 清理遠端舊審計暫存檔 (避免跨帳號權限衝突)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/node_{{ inventory_hostname }}.json"
+        - "/tmp/audit-node.sh"
+        - "/tmp/audit-node.py"
+      ignore_errors: true
+
+    - name: 部署 Linux 審計收集腳本 (Python 3)
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../scripts/audit-node-linux.py"
+        dest: /tmp/audit-node.py
+        mode: '0755'
+      
+
+    # --------------------------------------------------------------------------
+    # 2. 執行遠端審計並產出 node_<hostname>.json
+    # --------------------------------------------------------------------------
+    - name: 執行節點審計收集 (JSON 機器版)
+      ansible.builtin.command: python3 /tmp/audit-node.py "/tmp/node_{{ inventory_hostname }}.json"
+      register: audit_exec_res
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 2.1 針對 base 節點：自動自 network-db 容器導出 Network 拓撲資料 (免密碼)
+    # --------------------------------------------------------------------------
+    - name: 抓取遠端節點手冊 JSON 檔案至控制端
+      ansible.builtin.fetch:
+        src: "/tmp/node_{{ inventory_hostname }}.json"
+        dest: "/tmp/fetched_nodes/node_{{ inventory_hostname }}.json"
+        flat: yes
+
+    # --------------------------------------------------------------------------
+    # 4. 本地寫入 openlab-configs/node-information/ (JSON 機器版)
+    # --------------------------------------------------------------------------
+    - name: 確保目標 openlab-configs/node-information 目錄存在
+      ansible.builtin.file:
+        path: "{{ final_configs_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      run_once: true
+
+    - name: 寫入/更新節點手冊 JSON 至 openlab-configs
+      ansible.builtin.copy:
+        src: "/tmp/fetched_nodes/node_{{ inventory_hostname }}.json"
+        dest: "{{ final_configs_dir }}/node_{{ inventory_hostname }}.json"
+        mode: '0644'
+      delegate_to: localhost
+
+    - name: 同步渲染人類手冊 (Markdown) 至 Private-Vault (若目錄存在)
+      ansible.builtin.command: >
+        {{ playbook_dir }}/../../openlab-tools/bin/render-node-doc
+        /tmp/fetched_nodes/node_{{ inventory_hostname }}.json
+        --output "{{ private_vault_dir }}/Node_{{ inventory_hostname }}.md"
+      delegate_to: localhost
+      when: vault_exists | bool
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 5. 清理遠端暫存檔案
+    # --------------------------------------------------------------------------
+    - name: 清理遠端審計暫存檔
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/audit-node.sh
+        - "/tmp/node_{{ inventory_hostname }}.json"
+        - /tmp/network_topology.json
+      failed_when: false
+
+# ==============================================================================

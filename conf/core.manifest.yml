@@ -1,0 +1,148 @@
+# ==============================================================================
+# OpenLabOps Core Architecture Specification (conf/core.manifest.yml)
+# IMMUTABLE FRAMEWORK CONSTANTS & CONTRACT (FLAT LAN & GENERIC LINUX)
+# ==============================================================================
+
+framework:
+  name: "OpenLab Operations Framework"
+  spec_version: "1.2.0"
+  architecture_pattern: "4-Repo Federation + SSOT Manifest + Sensory Engine"
+  dependency_policy: "zero_external_dependencies_python3_stdlib"
+
+# ==============================================================================
+# 1. Parameter Resolution & Manifest Variable Bindings
+# ==============================================================================
+variable_bindings:
+  gitea_org: "${git_platform.org}"                   # Gitea Organization (e.g. OpenLabOps)
+  org_prefix: "${git_platform.repo_prefix}"           # Downstream prefix (default: openlab)
+  ansible_user: "${cluster.ansible_user}"             # Ansible automation user (default: ansible)
+  admin_user: "${cluster.admin_user}"                 # Site admin operator (default: labadmin)
+  domain: "${cluster.domain}"                         # Cluster domain (default: lab)
+  timezone: "${cluster.timezone}"                     # Global timezone
+  service_network: "${networks.service_lan}"          # Flat LAN / service network (192.168.1.0/24)
+  admin_network: "${networks.service_lan}"            # Admin endpoints network
+  gateway_ip: "${networks.gateway_ip}"                # Default gateway IP
+
+# ==============================================================================
+# 2. Downstream Repository Archetypes
+# ==============================================================================
+downstream_repos:
+  operations:
+    archetype: "operations"
+    organization: "${variable_bindings.gitea_org}"
+    description: "Consolidated Operations Hub (Ansible IaC & CLI Tools)"
+    default_branch: "main"
+    naming_pattern: "${variable_bindings.org_prefix}-operations"
+    content_policy: "operations_code_and_tools"
+  workflows:
+    archetype: "workflows"
+    organization: "${variable_bindings.gitea_org}"
+    description: "Gitea Actions CI/CD Pipelines & Composite Actions"
+    default_branch: "main"
+    naming_pattern: "${variable_bindings.org_prefix}-workflows"
+    content_policy: "ci_pipeline_only"
+  configs:
+    archetype: "cmdb"
+    organization: "${variable_bindings.gitea_org}"
+    description: "Dynamic ground truth facts, node docs, and rendered network configs"
+    default_branch: "main"
+    naming_pattern: "${variable_bindings.org_prefix}-configs"
+    content_policy: "data_and_cmdb"
+  secrets:
+    archetype: "credentials"
+    organization: "${variable_bindings.gitea_org}"
+    description: "Zero-Trust SSH Keypair Store"
+    default_branch: "main"
+    naming_pattern: "${variable_bindings.org_prefix}-secrets"
+    content_policy: "cluster_credentials_and_ssh_keys"
+
+# ==============================================================================
+# 3. Canonical Semantic Key Roles Schema
+# ==============================================================================
+canonical_keys:
+  ansible:
+    role: "ansible"
+    description: "Ansible automation and scheduled maintenance key"
+    default_user: "${variable_bindings.ansible_user}"
+    algorithm: "ed25519"
+    requires_from_restriction: true
+  user:
+    role: "user"
+    description: "Admin operator interactive key"
+    default_user: "${variable_bindings.admin_user}"
+    algorithm: "ed25519"
+    requires_from_restriction: false
+  git:
+    role: "git"
+    description: "Git platform version control access key"
+    default_user: "git"
+    algorithm: "ed25519"
+    requires_from_restriction: false
+
+# ==============================================================================
+# 4. Security & Key Profile Schema
+# ==============================================================================
+security_schema:
+  rotation_policy:
+    warning_threshold_days: 90
+    enforcement: "audit_alert"
+  supported_algorithms:
+    - "ed25519"
+    - "rsa"
+  profile_definitions:
+    standard:
+      key_type: "ed25519"
+      default_user: "${variable_bindings.ansible_user}"
+      scope: "management_endpoints"
+      allowed_from: ["${variable_bindings.admin_network}"]
+    cluster:
+      key_type: "ed25519"
+      default_user: "${variable_bindings.ansible_user}"
+      scope: "core_service_mesh"
+      allowed_from:
+        - "${variable_bindings.service_network}"
+
+# ==============================================================================
+# 5. CI/CD Action Secrets Schema
+# ==============================================================================
+cicd_secrets_schema:
+  bot_token: "BOT_TOKEN"
+  github_token: "GH_TOKEN"
+  master_token: "MASTER_TOKEN"
+
+# ==============================================================================
+# 6. Platform Collector Mapping
+# ==============================================================================
+platform_collectors:
+  linux:
+    script_path: "ansible/scripts/audit-node-linux.py"
+    interpreter: "python3"
+
+# ==============================================================================
+# 7. Network Tables Specification
+# ==============================================================================
+network_schema:
+  required_tables:
+    - name: "flat_lan"
+      description: "Flat local area network"
+    - name: "service_lan"
+      description: "Service servers and nodes"
+
+# ==============================================================================
+# 8. Inventory Hierarchy Taxonomy
+# ==============================================================================
+inventory_taxonomy:
+  node_classes:
+    - "standard"
+  standard_roles:
+    - "dev"
+    - "server"
+    - "desktop"
+  top_level_groups:
+    - "distros"
+    - "subnets"
+    - "capabilities"
+    - "dev"
+    - "servers"
+    - "desktops"
+    - "endpoints"

@@ -1,0 +1,32 @@
+---
+# ==============================================================================
+# Role Defaults: users
+# 支援外部參數/範本動態注入之使用者清單 (Data-Driven User Schema)
+# ==============================================================================
+users_default_shell: "{{ '/bin/sh' if (os_family | default('')) == 'BSD' or (ansible_facts.system | default('')) == 'BSD' else '/bin/bash' }}"
+users_secrets_dir: "{{ custom_secrets_dir | default(lookup('env', 'HOME') + '/openlab-secrets') }}"
+
+# 系統標準帳號名稱 (完全參數化，支援外部全域覆寫)
+users_automation_account: "{{ automation_user | default(ansible_user | default('lab')) }}"
+users_admin_account: "{{ admin_user | default('labadmin') }}"
+users_admin_pub_key_name: "{{ admin_pub_key_name | default('openlab') }}"
+
+# 預設使用者管理清單 (可被外部 vars, extra-vars, host_vars 或 Compiler Template 完整覆寫)
+users_list:
+  - name: "{{ users_automation_account }}"
+    shell: "{{ users_default_shell }}"
+    create_home: true
+    wheel: true
+    sudoers_rule: "{{ users_automation_account }} ALL=(ALL) NOPASSWD: ALL"
+    pub_key_content: ""
+    pub_key_path: "{{ users_secrets_dir }}/ssh-key/{{ users_automation_account }}.pub"
+    key_options: "{{ ansible_key_options | default('from=\"192.168.1.0/24\"') }}"
+
+  - name: "{{ users_admin_account }}"
+    shell: "{{ users_default_shell }}"
+    create_home: true
+    wheel: true
+    sudoers_rule: "{{ users_admin_account }} ALL=(ALL) ALL"
+    pub_key_content: ""
+    pub_key_path: "{{ users_secrets_dir }}/ssh-key/{{ users_admin_pub_key_name }}.pub"
+    key_options: "{{ user_key_options | default('from=\"192.168.1.0/24\"') }}"

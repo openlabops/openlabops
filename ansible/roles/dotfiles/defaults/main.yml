@@ -1,0 +1,29 @@
+---
+# ==============================================================================
+# Role Defaults: dotfiles
+# 支援外部參數/範本動態注入之 Dotfiles 配置 (Data-Driven Dotfiles Schema)
+# ==============================================================================
+# 部署目標使用者與家目錄 (完全參數化，預設可繼承 admin_user 或 ansible_user)
+dotfiles_target_user: "{{ admin_user | default('labadmin') }}"
+dotfiles_target_home: "{{ ('/home/' + dotfiles_target_user) if dotfiles_target_user != 'root' else '/root' }}"
+dotfiles_target_group: "{{ 'wheel' if ((os_family | default('')) == 'BSD' or (ansible_facts.system | default('')) == 'BSD') else dotfiles_target_user }}"
+
+# 來源配置倉庫根目錄 (支援環境變數 HOME，避免硬編碼家目錄路徑)
+dotfiles_configs_root: "{{ custom_configs_root | default(lookup('env', 'HOME') + '/openlab-configs') }}"
+
+# 功能開關
+dotfiles_manage_shell: true
+dotfiles_manage_editor: true
+dotfiles_manage_ssh_config: true
+dotfiles_manage_root_dotfiles: true
+
+# 全域 Shell 命名與來源配置 (消除硬編碼 openlab)
+dotfiles_global_rc_name: "openlab"
+dotfiles_global_shellrc_src: ""
+dotfiles_host_shellrc_src: ""
+dotfiles_shell_type: ""
+
+# 編輯器與 SSH 來源路徑 (可外部完全覆寫)
+dotfiles_vimrc_src: "{{ dotfiles_configs_root }}/editor/vim/.vimrc"
+dotfiles_nvim_src: "{{ dotfiles_configs_root }}/editor/nvim/"
+dotfiles_ssh_config_src: "{{ dotfiles_configs_root }}/ssh-config/client/config"

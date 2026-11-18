@@ -1,0 +1,9 @@
+---
+# ==============================================================================
+# Playbook: Fetch Configurations (Legacy Compatibility Alias)
+# Architecture:
+#   - 呼叫通用雙向檔案同步引擎 (backup-node.yml)
+#   - 依據主機或群組之 `backup` / `dotfiles` 宣告清單動態採集檔案
+#   - 徹底消除特定作業系統與發行版路徑硬編碼 [INV-03]
+# ==============================================================================
+- import_playbook: backup-node.yml

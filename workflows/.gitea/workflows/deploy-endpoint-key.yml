@@ -1,0 +1,36 @@
+name: Deploy Client Endpoint SSH Key Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint_name:
+        description: 'Client Endpoint name (e.g., workstation, laptop, client1)'
+        required: true
+        default: 'workstation'
+      target_hosts:
+        description: 'Target Host(s) or Group (e.g., servers, all)'
+        required: true
+        default: 'servers'
+
+jobs:
+  deploy-endpoint-key:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GIT_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
+
+      - name: 執行端點金鑰分發劇本
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/deploy-endpoint-key.yml'
+          target_hosts: ${{ inputs.target_hosts }}
+          extra_vars: "endpoint=${{ inputs.endpoint_name }}"
+          key_name: 'id_user.key'
+          gitea_host: ${{ vars.GIT_HOST || 'gitea.lab' }}
+          org_name: ${{ vars.ORG_NAME || 'OpenLabOps' }}
+          token: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}

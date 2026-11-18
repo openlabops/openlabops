@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# SSH Client 配置部署 (來源與使用者支援外部參數完全注入)
+# ==============================================================================
+- name: "[SSH] 確保目標使用者 ({{ dotfiles_target_user }}) .ssh 目錄存在 (0700)"
+  ansible.builtin.file:
+    path: "{{ dotfiles_target_home }}/.ssh"
+    state: directory
+    owner: "{{ dotfiles_target_user }}"
+    group: "{{ dotfiles_target_group }}"
+    mode: '0700'
+  when: target_user_home_stat.stat.exists
+
+- name: "[SSH] 部署統一的 ~/.ssh/config 至 {{ dotfiles_target_home }}/.ssh/config (0600)"
+  ansible.builtin.copy:
+    src: "{{ dotfiles_ssh_config_src }}"
+    dest: "{{ dotfiles_target_home }}/.ssh/config"
+    owner: "{{ dotfiles_target_user }}"
+    group: "{{ dotfiles_target_group }}"
+    mode: '0600'
+  when: target_user_home_stat.stat.exists

@@ -1,0 +1,50 @@
+name: Sync Workflows to Action Repo
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'workflows/**'
+      - '.gitea/workflows/**'
+      - '.gitea/actions/**'
+  workflow_dispatch:
+
+jobs:
+  sync-to-action:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
+
+      - name: 準備基礎環境
+        uses: ./.gitea/actions/setup-environment
+
+      - name: 檢出目標 action 倉庫
+        uses: ./.gitea/actions/checkout-federation
+        with:
+          repos: "action"
+          dest_dir: "/tmp"
+          gitea_host: ${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}
+          org_name: ${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}
+          token: ${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}
+
+      - name: 同步工作流與 Actions 定義檔至目標倉庫
+        run: |
+          mkdir -p /tmp/action/.gitea/workflows /tmp/action/.gitea/actions
+          cp -f .gitea/workflows/*.yml /tmp/action/.gitea/workflows/ 2>/dev/null || true
+          cp -rf .gitea/actions/* /tmp/action/.gitea/actions/ 2>/dev/null || true
+
+      - name: 提交並推送至 action 倉庫
+        uses: ./.gitea/actions/git-sync-commit
+        with:
+          target_dir: "/tmp/action"
+          commit_msg: "chore(ci): sync workflows from {{ git_platform.repo_prefix }}-workflows"
+          author_name: "ci-bot"
+          author_email: "ci-bot@{{ cluster.domain }}"
+          branch: "main"

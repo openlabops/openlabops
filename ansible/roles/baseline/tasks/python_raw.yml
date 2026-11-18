@@ -1,0 +1,33 @@
+---
+# ==============================================================================
+# Raw Bootstrap: 確保目標主機具備基本 Python 直譯器
+# ==============================================================================
+- name: "[Raw] 確保 Photon OS Python3 已安裝"
+  ansible.builtin.raw: "tdnf install -y python3"
+  changed_when: false
+  failed_when: false
+  when: (os_family | default('')) == 'PhotonOS' or (ansible_facts.os_family | default('')) in ['PhotonOS', 'VMware Photon OS']
+
+- name: "[Raw] 確保 Oracle Linux / OCI Python3 已安裝"
+  ansible.builtin.raw: "dnf install -y python3"
+  changed_when: false
+  failed_when: false
+  when: (os_family | default('')) == 'OracleLinux' or (ansible_facts.os_family | default('')) in ['RedHat', 'Rocky', 'AlmaLinux']
+
+- name: "[Raw] 確保 Arch Linux Python 已安裝"
+  ansible.builtin.raw: "pacman -Sy --noconfirm python"
+  changed_when: false
+  failed_when: false
+  when: (os_family | default('')) == 'ArchLinux' or (ansible_facts.os_family | default('')) in ['Archlinux', 'ArchLinux']
+
+- name: "[Raw] 確保 Debian / Ubuntu Python3 已安裝"
+  ansible.builtin.raw: "apt-get update && apt-get install -y python3"
+  changed_when: false
+  failed_when: false
+  when: (os_family | default('')) == 'Debian' or (ansible_facts.os_family | default('')) == 'Debian'
+
+- name: "[Raw] 確保 Alpine Linux Python3 已安裝"
+  ansible.builtin.raw: "apk add --no-cache python3"
+  changed_when: false
+  failed_when: false
+  when: (os_family | default('')) == 'Alpine' or (ansible_facts.os_family | default('')) == 'Alpine'

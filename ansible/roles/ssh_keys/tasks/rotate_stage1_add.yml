@@ -1,0 +1,18 @@
+---
+# ==============================================================================
+# Task: rotate_stage1_add.yml
+# 金鑰輪換 Stage 1: 追加新 SSH 公鑰至目標主機 authorized_keys
+# ==============================================================================
+- name: 讀取新 SSH 公鑰內容
+  ansible.builtin.slurp:
+    src: "{{ ssh_keys_rotate_pub_path }}"
+  register: rotate_new_pub_b64
+  delegate_to: localhost
+  become: false
+
+- name: 將新 SSH 公鑰追加至 authorized_keys (含 IP 網段限制)
+  ansible.posix.authorized_key:
+    user: "{{ ssh_keys_rotate_user }}"
+    state: present
+    key: "{{ rotate_new_pub_b64.content | b64decode | trim }}"
+    key_options: "{{ ssh_keys_rotate_key_options }}"

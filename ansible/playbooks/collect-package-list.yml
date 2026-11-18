@@ -1,0 +1,85 @@
+---
+# ==============================================================================
+# Playbook: Collect Explicit Non-Dependency Non-System Package List
+# Target: servers (or override via --extra-vars "target_hosts=...")
+# 說明:
+#   - 使用 custom_package_facts 模組 (類似 ansible.builtin.setup 原生 facts 收集機制)
+#   - 採集全網節點 (Linux) 安裝之「非純相依、非系統基底」套件
+#   - 標出哪些套件是使用者主動安裝 (explicitly installed)，排除純依賴與系統基底
+#   - 輸出至 openlab-configs/node-information/packages_<hostname>.json
+# ==============================================================================
+
+- name: 全網節點非相依、非系統主動安裝套件清冊採集
+  hosts: "{{ target_hosts | default('servers') }}"
+
+  gather_facts: true
+  become: true
+
+  vars:
+    configs_root: "{{ custom_configs_root | default(lookup('env', 'HOME') + '/openlab-configs') }}"
+    alt_configs_root: "/tmp/openlab-configs"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 0. 本地環境與目標路徑探測 (Localhost)
+    # --------------------------------------------------------------------------
+    - name: 探測本地 openlab-configs 目錄
+      ansible.builtin.stat:
+        path: "{{ configs_root }}/node-information"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: configs_stat
+
+    - name: 確定存放目標目錄
+      ansible.builtin.set_fact:
+        target_output_dir: "{{ (configs_root + '/node-information') if configs_stat.stat.exists else (alt_configs_root + '/node-information') }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: 確保輸出目錄存在
+      ansible.builtin.file:
+        path: "{{ target_output_dir }}"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    # --------------------------------------------------------------------------
+    # 1. 執行 custom_package_facts 模組採集
+    # --------------------------------------------------------------------------
+    - name: 透過 custom_package_facts 採集節點主動安裝套件 Facts
+      custom_package_facts:
+        filter_dependencies: true
+        filter_system: true
+      register: pkg_facts_res
+
+    # --------------------------------------------------------------------------
+    # 2. 輸出並彙整 JSON 清冊至 openlab-configs
+    # --------------------------------------------------------------------------
+    - name: 輸出結構化套件清冊 JSON 至 openlab-configs
+      ansible.builtin.copy:
+        content: "{{ {
+          'hostname': ansible_facts['nodename'] | default(inventory_hostname),
+          'inventory_hostname': inventory_hostname,
+          'os_family': ansible_facts['os_family'] | default(os_family | default('unknown')),
+          'distribution': ansible_facts['distribution'] | default('unknown'),
+          'package_manager': ansible_facts['package_manager_detected'] | default('unknown'),
+          'explicit_packages_count': ansible_facts['explicit_packages_count'] | default(0),
+          'packages': ansible_facts['explicit_packages'] | default([])
+        } | to_nice_json(indent=2) }}"
+        dest: "{{ target_output_dir }}/packages_{{ inventory_hostname }}.json"
+        mode: '0644'
+      delegate_to: localhost
+      become: false
+
+    # --------------------------------------------------------------------------
+    # 3. 終端輸出摘要報告
+    # --------------------------------------------------------------------------
+    - name: 顯示採集摘要
+      ansible.builtin.debug:
+        msg: >-
+          [{{ inventory_hostname }}] 檢測套件管理器: {{ ansible_facts['package_manager_detected'] }} |
+          主動安裝之非相依/非系統套件共 {{ ansible_facts['explicit_packages_count'] }} 個

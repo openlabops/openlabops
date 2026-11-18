@@ -1,0 +1,26 @@
+---
+# ==============================================================================
+# 環境準備與來源路徑探測 (Localhost)
+# ==============================================================================
+- name: 探測本地配置來源目錄路徑
+  ansible.builtin.stat:
+    path: "{{ dotfiles_configs_root }}"
+  delegate_to: localhost
+  become: false
+  register: configs_stat
+
+- name: 確定引用之 configs 來源根目錄
+  ansible.builtin.set_fact:
+    resolved_configs: "{{ dotfiles_configs_root if configs_stat.stat.exists else '/tmp/openlab-configs' }}"
+
+- name: 檢查主機專屬 Bashrc 是否存在於 configs 倉庫
+  ansible.builtin.stat:
+    path: "{{ resolved_configs }}/shell/{{ inventory_hostname }}.bashrc"
+  delegate_to: localhost
+  become: false
+  register: host_bashrc_stat
+
+- name: 檢查目標使用者 ({{ dotfiles_target_user }}) 家目錄是否存在於目標節點
+  ansible.builtin.stat:
+    path: "{{ dotfiles_target_home }}"
+  register: target_user_home_stat

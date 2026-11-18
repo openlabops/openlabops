@@ -1,0 +1,10 @@
+---
+# ==============================================================================
+# Role Tasks: users
+# 批次處理由 users_list 定義之使用者帳號、Sudoers 權限與 SSH 公鑰
+# ==============================================================================
+- name: "依據 users_list 逐一配置使用者帳號與授權"
+  ansible.builtin.include_tasks: manage_user.yml
+  loop: "{{ users_list }}"
+  loop_control:
+    loop_var: user_item

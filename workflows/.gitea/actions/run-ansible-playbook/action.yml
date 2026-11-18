@@ -1,0 +1,65 @@
+name: "Run Ansible Playbook"
+description: "Executes an Ansible playbook within openlab-ansible with standardized options, error handling, and parameter injection"
+inputs:
+  playbook:
+    description: "Relative path to the playbook (e.g., playbooks/deploy-openlab-tools.yml)"
+    required: true
+  work_dir:
+    description: "Path to openlab-ansible repository directory"
+    required: false
+    default: "/tmp/openlab-ansible"
+  inventory:
+    description: "Path to inventory file relative to work_dir"
+    required: false
+    default: "inventory/hosts.yml"
+  target_hosts:
+    description: "Target host(s) or group name (injected as target_hosts variable if provided)"
+    required: false
+    default: ""
+  extra_vars:
+    description: "Additional extra variables string (e.g. key=val foo=bar)"
+    required: false
+    default: ""
+  tags:
+    description: "Only run plays and tasks tagged with these values"
+    required: false
+    default: ""
+  skip_tags:
+    description: "Only run plays and tasks whose tags do not match these values"
+    required: false
+    default: ""
+
+runs:
+  using: "composite"
+  steps:
+    - name: Execute Ansible Playbook
+      shell: sh
+      env:
+        WORK_DIR: ${{ inputs.work_dir }}
+        PLAYBOOK: ${{ inputs.playbook }}
+        INVENTORY: ${{ inputs.inventory }}
+        TARGET_HOSTS: ${{ inputs.target_hosts }}
+        EXTRA_VARS: ${{ inputs.extra_vars }}
+        TAGS: ${{ inputs.tags }}
+        SKIP_TAGS: ${{ inputs.skip_tags }}
+      run: |
+
+        cd "$WORK_DIR"
+        export ANSIBLE_HOST_KEY_CHECKING="False"
+
+        set -- -i "$INVENTORY" "$PLAYBOOK"
+        if [ -n "$TARGET_HOSTS" ]; then
+          set -- "$@" --extra-vars "target_hosts=$TARGET_HOSTS"
+        fi
+        if [ -n "$EXTRA_VARS" ]; then
+          set -- "$@" --extra-vars "$EXTRA_VARS"
+        fi
+        if [ -n "$TAGS" ]; then
+          set -- "$@" --tags "$TAGS"
+        fi
+        if [ -n "$SKIP_TAGS" ]; then
+          set -- "$@" --skip-tags "$SKIP_TAGS"
+        fi
+
+        echo "🚀 [Action: run-ansible-playbook] Executing in ${WORK_DIR}: ansible-playbook $*"
+        ansible-playbook "$@"

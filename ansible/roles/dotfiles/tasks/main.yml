@@ -1,0 +1,21 @@
+---
+# ==============================================================================
+# Role Tasks: dotfiles
+# ==============================================================================
+- name: "[Dotfiles] 探測並確認 openlab-configs 來源目錄"
+  ansible.builtin.include_tasks: detect.yml
+
+- name: "[Dotfiles] 部署 Shell 配置"
+  ansible.builtin.include_tasks: shell.yml
+  when: dotfiles_manage_shell | bool
+  tags: [shell, dotfiles]
+
+- name: "[Dotfiles] 部署 Editor 配置 (Vim / Neovim)"
+  ansible.builtin.include_tasks: editor.yml
+  when: dotfiles_manage_editor | bool
+  tags: [editor, vim, nvim, dotfiles]
+
+- name: "[Dotfiles] 部署 SSH Client Config"
+  ansible.builtin.include_tasks: ssh_config.yml
+  when: dotfiles_manage_ssh_config | bool
+  tags: [ssh_config, dotfiles]

@@ -1,0 +1,53 @@
+name: Deploy Node SSH Keys Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_hosts:
+        description: 'Target Host(s) or Group (e.g., dev, servers, all)'
+        required: true
+        default: 'dev'
+      target_user:
+        description: 'Target User Account on Target Host (e.g., {{ cluster.admin_user }})'
+        required: false
+        default: '{{ cluster.admin_user }}'
+      deploy_client_keys:
+        description: 'Deploy Managed Client Keys into ~/.ssh/ (Strictly restricted to dev nodes)'
+        required: false
+        default: 'false'
+      deploy_authorized_keys:
+        description: 'Deploy Public Keys into authorized_keys'
+        required: false
+        default: 'true'
+      deploy_ssh_config:
+        description: 'Deploy Standard ~/.ssh/config'
+        required: false
+        default: 'true'
+      source_commit_sha:
+        description: 'Historical secrets Git Commit SHA on Target Host (used to unlock node before updating to HEAD)'
+        required: false
+        default: 'HEAD'
+
+jobs:
+  deploy-ssh-keys:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
+
+      - name: 執行節點 SSH 金鑰部署劇本
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: 'playbooks/deploy-node-ssh-keys.yml'
+          extra_vars: "target_hosts=${{ '{' }}{{ '{' }} inputs.target_hosts {{ '}' }}{{ '}' }} target_user=${{ '{' }}{{ '{' }} inputs.target_user {{ '}' }}{{ '}' }} client_keys=${{ '{' }}{{ '{' }} inputs.deploy_client_keys {{ '}' }}{{ '}' }} authorized_keys=${{ '{' }}{{ '{' }} inputs.deploy_authorized_keys {{ '}' }}{{ '}' }} ssh_config=${{ '{' }}{{ '{' }} inputs.deploy_ssh_config {{ '}' }}{{ '}' }}"
+          source_commit_sha: ${{ '{' }}{{ '{' }} inputs.source_commit_sha {{ '}' }}{{ '}' }}
+          need_configs: 'true'
+          key_name: '{{ keys.ansible | default("ansible.key") }}'
+          gitea_host: ${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}
+          org_name: ${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}
+          token: ${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}

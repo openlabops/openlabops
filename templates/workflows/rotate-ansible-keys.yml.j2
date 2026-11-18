@@ -1,0 +1,98 @@
+name: Ansible {{ cluster.ansible_user | capitalize }} Key Rotation Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_nodes:
+        description: 'Target Node(s) to automatically deploy newly rotated client keys (e.g. dev, localhost)'
+        required: false
+        default: 'dev'
+
+jobs:
+  rotate-ansible-keys:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
+
+      - name: 準備基礎環境
+        uses: ./.gitea/actions/setup-environment
+
+      - name: 檢出聯邦倉庫
+        uses: ./.gitea/actions/checkout-federation
+        with:
+          repos: "{{ git_platform.repo_prefix }}-ansible {{ git_platform.repo_prefix }}-secrets {{ git_platform.repo_prefix }}-configs"
+          gitea_host: ${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}
+          org_name: ${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}
+          token: ${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}
+
+      - name: 產生新 Ansible 管理金鑰對
+        uses: ./.gitea/actions/generate-key-pair
+        with:
+          key_name: "{{ (keys.ansible | regex_replace('\\.key$', '')) if keys is defined and keys.ansible is defined else cluster.ansible_user }}"
+          key_type: "ed25519"
+          dest_dir: "/tmp/ssh_rotation"
+          comment: "{{ cluster.ansible_user }}-ansible-rotation"
+
+      - name: 配置既有舊金鑰供初步連線
+        uses: ./.gitea/actions/setup-ssh-auth
+        with:
+          key_name: "{{ keys.ansible | default('ansible.key') }}"
+
+      - name: 記錄舊版公鑰內容
+        run: |
+          echo "OLD_PUB_KEY=$(cat /tmp/{{ git_platform.repo_prefix }}-secrets/ssh-key/{{ keys.ansible | default('ansible.key') | regex_replace('\\.key$', '.pub') }})" >> $GITHUB_ENV
+
+      - name: 階段一：添加新公鑰至目標主機
+        uses: ./.gitea/actions/run-ansible-playbook
+        with:
+          playbook: "playbooks/rotate-ansible-keys.yml"
+          tags: "add_new_key"
+          extra_vars: "new_pub_key_path=/tmp/ssh_rotation/{{ keys.ansible | default('ansible.key') | regex_replace('\\.key$', '.pub') }}"
+
+      - name: 階段二：使用新私鑰驗證 SSH 連線
+        uses: ./.gitea/actions/run-ansible-playbook
+        with:
+          playbook: "playbooks/rotate-ansible-keys.yml"
+          tags: "verify_new_key"
+          extra_vars: "new_priv_key_path=/tmp/ssh_rotation/{{ keys.ansible | default('ansible.key') }}"
+
+      - name: 階段三：安全移除舊公鑰
+        uses: ./.gitea/actions/run-ansible-playbook
+        with:
+          playbook: "playbooks/rotate-ansible-keys.yml"
+          tags: "remove_old_key"
+          extra_vars: "new_priv_key_path=/tmp/ssh_rotation/{{ keys.ansible | default('ansible.key') }} old_pub_key='${{ '{' }}{{ '{' }} env.OLD_PUB_KEY {{ '}' }}{{ '}' }}'"
+
+      - name: 階段四：提交新金鑰至 Secrets 倉庫
+        run: |
+          cp -f /tmp/ssh_rotation/{{ keys.ansible | default('ansible.key') }} /tmp/{{ git_platform.repo_prefix }}-secrets/ssh-key/{{ keys.ansible | default('ansible.key') }}
+          cp -f /tmp/ssh_rotation/{{ keys.ansible | default('ansible.key') | regex_replace('\\.key$', '.pub') }} /tmp/{{ git_platform.repo_prefix }}-secrets/ssh-key/{{ keys.ansible | default('ansible.key') | regex_replace('\\.key$', '.pub') }}
+
+      - name: 推送新金鑰至 Secrets 倉庫
+        uses: ./.gitea/actions/git-sync-commit
+        with:
+          target_dir: "/tmp/{{ git_platform.repo_prefix }}-secrets"
+          commit_msg: "chore(security): rotate {{ cluster.ansible_user }} SSH key pair"
+          author_name: "ci-bot"
+          author_email: "bot@{{ cluster.domain }}"
+
+      - name: 階段四點五：更新受控節點金鑰 Commit Stamp 印記
+        uses: ./.gitea/actions/run-ansible-playbook
+        with:
+          playbook: "playbooks/rotate-ansible-keys.yml"
+          tags: "update_commit_stamp"
+          extra_vars: "new_priv_key_path=/tmp/ssh_rotation/{{ keys.ansible | default('ansible.key') }}"
+
+      - name: 階段五：自動派發新金鑰至目標節點
+        if: ${{ '{' }}{{ '{' }} github.event.inputs.target_nodes != '' {{ '}' }}{{ '}' }}
+        uses: ./.gitea/actions/run-ansible-playbook
+        with:
+          playbook: "playbooks/deploy-node-ssh-keys.yml"
+          target_hosts: "${{ '{' }}{{ '{' }} github.event.inputs.target_nodes {{ '}' }}{{ '}' }}"
+          extra_vars: "key_name='{{ keys.ansible | default('ansible.key') }}'"

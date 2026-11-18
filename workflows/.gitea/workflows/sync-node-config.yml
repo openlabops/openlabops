@@ -1,0 +1,70 @@
+name: Sync Node Config & Auto Broadcast Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_host:
+        description: '來源主機名稱 (例如: control-node, node1, node2)'
+        required: true
+        default: 'control-node'
+  repository_dispatch:
+    types: [sync-node-config]
+
+jobs:
+  sync-node-config:
+    runs-on: ansible
+    defaults:
+      run:
+        shell: sh
+
+    steps:
+      - name: 檢出工作流倉庫 (Self Checkout)
+        run: |
+          git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GIT_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
+
+      - name: 自指定來源主機採集最新組態
+        uses: ./.gitea/actions/execute-homelab-playbook
+        with:
+          playbook: "playbooks/fetch-node-configs.yml"
+          extra_vars: "source_host=${{ inputs.source_host || github.event.client_payload.source_host || 'base' }} custom_configs_root=/tmp/openlab-configs"
+          need_configs: "true"
+          key_name: "ansible.key"
+          gitea_host: ${{ vars.GIT_HOST || 'gitea.lab' }}
+          org_name: ${{ vars.ORG_NAME || 'OpenLabOps' }}
+          token: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}
+
+      - name: 分析變更範圍並提交備份
+        id: analyze_changes
+        run: |
+          cd /tmp/openlab-configs
+          SOURCE_HOST="${{ inputs.source_host || github.event.client_payload.source_host || 'base' }}"
+          CHANGES=$(git status --porcelain shell/ editor/)
+          if [ -z "$CHANGES" ]; then
+            echo "✅ 來源主機 [${SOURCE_HOST}] 組態與庫存完全一致，無須更新。"
+            echo "HAS_CHANGES=false" >> $GITHUB_ENV
+            echo "GLOBAL_CHANGED=false" >> $GITHUB_ENV
+            exit 0
+          fi
+
+          echo "HAS_CHANGES=true" >> $GITHUB_ENV
+          if echo "$CHANGES" | grep -E "openlab\.|editor/" > /dev/null 2>&1; then
+            echo "GLOBAL_CHANGED=true" >> $GITHUB_ENV
+          else
+            echo "GLOBAL_CHANGED=false" >> $GITHUB_ENV
+          fi
+
+      - name: 提交變更至 Configs 倉庫
+        if: ${{ env.HAS_CHANGES == 'true' }}
+        uses: ./.gitea/actions/git-sync-commit
+        with:
+          target_dir: "/tmp/openlab-configs"
+          commit_msg: "feat(configs): sync configs from ${{ inputs.source_host || github.event.client_payload.source_host || 'base' }}"
+          author_name: "ci-bot"
+          author_email: "ci-bot@lab"
+
+      - name: 自動廣播全域變更至全網節點 (Ansible Broadcast)
+        if: ${{ env.GLOBAL_CHANGED == 'true' }}
+        uses: ./.gitea/actions/run-ansible-playbook
+        with:
+          playbook: "playbooks/deploy-dotfiles.yml"
+          extra_vars: "custom_configs_root=/tmp/openlab-configs"

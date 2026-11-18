@@ -1,0 +1,45 @@
+# ==============================================================================
+# Declarative Backup Specification
+# Rendered dynamically from cluster inventory during initialization.
+#
+# Ansible Variable Paradigm:
+# Backup targets are defined as standard Ansible list variables ('backup'):
+#
+#   backup:
+#     - src: "/path/to/source/file"
+#       dest: "relative/path/in/backup"
+#
+# ------------------------------------------------------------------------------
+# 複數檔案備份範例 (Multi-File Example - 全部已註解供參考):
+# ------------------------------------------------------------------------------
+# # backup:
+# #   - src: "/etc/resolv.conf"
+# #     dest: "network/resolv.conf"
+# #   - src: "/etc/nginx/nginx.conf"
+# #     dest: "nginx/nginx.conf"
+# #   - src: "/var/lib/app/config.json"
+# #     dest: "app/config.json"
+# ------------------------------------------------------------------------------
+# Playbooks loop over `{% raw %}{{ backup | default([]) }}{% endraw %}` with `item.src` and `item.dest`.
+# Source and destination paths start empty ("") for operator customization.
+# ==============================================================================
+
+version: "1.0.0"
+
+# 群組層級預設備份變數 (Group Variables: e.g. group_vars/<group>.yml)
+groups:
+{%- for group_name in inventory_groups %}
+  {{ group_name }}:
+    backup:
+      - src: ""
+        dest: ""
+{%- endfor %}
+
+# 節點特化備份變數 (Node / Host Variables: e.g. host_vars/<node>.yml)
+nodes:
+{%- for node_name in inventory_nodes %}
+  {{ node_name }}:
+    backup:
+      - src: ""
+        dest: ""
+{%- endfor %}

@@ -1,0 +1,305 @@
+---
+# ==============================================================================
+# Playbook: Endpoint Self-Bootstrapping & Tool Installation
+# Target: localhost (External Endpoint / Workstation: wsl, laptop, desktop, etc.)
+# Method: ansible-pull or local execution
+# Usage:
+#   ansible-pull -U http://gitea.lab/OpenLabOps/openlab-ansible.git -C main playbooks/endpoint-setup.yml
+#   OR locally:
+#   sudo ansible-playbook -i localhost, -c local playbooks/endpoint-setup.yml
+# ==============================================================================
+- name: 外部端點環境配置與 openlab-tools 工具鏈安裝
+  hosts: localhost
+  connection: local
+  gather_facts: true
+  gather_subset:
+    - '!all'
+    - '!min'
+    - 'distribution'
+    - 'user'
+  become: true
+
+  vars:
+    tools_install_dir: "{{ ops_tools_dir | default('/usr/local/bin/openlab') }}"
+    bin_symlink_dir: "/usr/local/bin"
+    token_config_dir: "{{ ops_tools_dir | default('/usr/local/bin/openlab') }}"
+    tools_git_repo: "{{ ops_tools_repo | default('http://' + (git_platform_host | default('gitea.lab')) + '/' + (git_org_name | default('OpenLabOps')) + '/openlab-tools.git') }}"
+    tools_local_workspace: "{{ lookup('env', 'HOME') }}/openlab-tools"
+    target_user: "{{ ansible_env.SUDO_USER | default(lookup('env', 'USER'), true) | default(admin_user | default('labadmin'), true) }}"
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. 本地基礎依賴套件檢查與安裝 (全發行版支援)
+    # --------------------------------------------------------------------------
+    - name: 確保 Debian / Ubuntu (含 WSL) 基礎套件就緒
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-pip
+          - git
+          - curl
+          - jq
+          - openssl
+          - rsync
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == 'Debian'
+
+    - name: 確保 Arch Linux (含 Manjaro / EndeavourOS) 基礎套件就緒
+      ansible.builtin.pacman:
+        name:
+          - python
+          - git
+          - curl
+          - jq
+          - openssl
+          - rsync
+        state: present
+      when: ansible_facts['os_family'] == 'Archlinux'
+
+    - name: 確保 RedHat / Fedora / Rocky / Oracle Linux 基礎套件就緒
+      ansible.builtin.dnf:
+        name:
+          - python3
+          - git
+          - curl
+          - jq
+          - openssl
+          - rsync
+        state: present
+      when: ansible_facts['os_family'] in ['RedHat', 'Rocky', 'AlmaLinux']
+
+    - name: 確保 VMware Photon OS 基礎套件就緒
+      ansible.builtin.package:
+        name:
+          - python3
+          - git
+          - curl
+          - jq
+          - openssl
+          - rsync
+        state: present
+      when: ansible_facts['os_family'] in ['PhotonOS', 'VMware Photon OS']
+
+    - name: 確保 Alpine Linux 基礎套件就緒
+      ansible.builtin.apk:
+        name:
+          - python3
+          - py3-pip
+          - git
+          - curl
+          - jq
+          - openssl
+          - rsync
+        state: present
+        update_cache: yes
+      when: ansible_facts['os_family'] == 'Alpine'
+
+    - name: 確保 openSUSE / SLES 基礎套件就緒
+      ansible.builtin.zypper:
+        name:
+          - python3
+          - git
+          - curl
+          - jq
+          - openssl
+          - rsync
+        state: present
+      when: ansible_facts['os_family'] == 'Suse'
+
+    # --------------------------------------------------------------------------
+    # 2. 建立目標安裝目錄
+    # --------------------------------------------------------------------------
+    - name: 建立工具鏈根目錄 ({{ tools_install_dir }})
+      ansible.builtin.file:
+        path: "{{ tools_install_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: 建立 Token 與私密配置目錄 ({{ token_config_dir }})
+      ansible.builtin.file:
+        path: "{{ token_config_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    # --------------------------------------------------------------------------
+    # 3. 部署 openlab-tools 代碼庫
+    # --------------------------------------------------------------------------
+    - name: 檢查本地工作區是否存在 openlab-tools 代碼
+      ansible.builtin.stat:
+        path: "{{ tools_local_workspace }}"
+      register: local_tools_stat
+
+    - name: 從本地工作區同步 openlab-tools 至 /usr/local/bin/openlab
+      ansible.posix.synchronize:
+        src: "{{ tools_local_workspace }}/"
+        dest: "{{ tools_install_dir }}/"
+        delete: no
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=__pycache__"
+      when: local_tools_stat.stat.exists and local_tools_stat.stat.isdir
+
+    - name: 若無本地工作區，則從 Gitea 檢出 openlab-tools 庫
+      ansible.builtin.git:
+        repo: "{{ tools_git_repo }}"
+        dest: "{{ tools_install_dir }}"
+        version: main
+        force: yes
+      when: not (local_tools_stat.stat.exists and local_tools_stat.stat.isdir)
+
+    - name: 探測控制端是否具備 engine 與 lang 目錄
+      ansible.builtin.stat:
+        path: "{{ playbook_dir }}/../../{{ item }}"
+      loop:
+        - "engine"
+        - "lang"
+      register: local_extra_stats
+
+    - name: 同步 engine 與 lang 目錄至 {{ tools_install_dir }}
+      ansible.posix.synchronize:
+        src: "{{ item.item }}/"
+        dest: "{{ tools_install_dir }}/{{ item.item | basename }}/"
+        delete: no
+        rsync_opts:
+          - "--exclude=__pycache__"
+          - "--exclude=*.pyc"
+      loop: "{{ local_extra_stats.results }}"
+      when: item.stat.exists | default(false)
+
+    # --------------------------------------------------------------------------
+    # 4. 權限標準化
+    # --------------------------------------------------------------------------
+    - name: 批次確保 bin、lib、engine 與 lang 目錄具備標準執行與讀取權限 (0755)
+      ansible.builtin.file:
+        path: "{{ tools_install_dir }}/{{ item }}"
+        mode: '0755'
+        owner: root
+        group: root
+        recurse: yes
+      loop:
+        - "bin"
+        - "lib"
+        - "engine"
+        - "lang"
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 5. 建立命令軟連結至 /usr/local/bin
+    # --------------------------------------------------------------------------
+    - name: 建立 CLI 命令軟連結至 /usr/local/bin
+      ansible.builtin.file:
+        src: "{{ item.src }}"
+        dest: "{{ bin_symlink_dir }}/{{ item.dest }}"
+        state: link
+        force: yes
+      loop:
+        - { src: "{{ tools_install_dir }}/bin/lab-tools", dest: "lab-tools" }
+        - { src: "{{ tools_install_dir }}/bin/lab-status", dest: "lab-status" }
+        - { src: "{{ tools_install_dir }}/bin/lab-node", dest: "lab-node" }
+        - { src: "{{ tools_install_dir }}/bin/lab-config", dest: "lab-config" }
+        - { src: "{{ tools_install_dir }}/bin/lab-setup", dest: "lab-setup" }
+        - { src: "{{ tools_install_dir }}/bin/lab-ssh", dest: "lab-ssh" }
+        - { src: "{{ tools_install_dir }}/bin/lab-info", dest: "lab-info" }
+        - { src: "{{ tools_install_dir }}/bin/lab-backup", dest: "lab-backup" }
+        - { src: "{{ tools_install_dir }}/bin/lab-upgrade", dest: "lab-upgrade" }
+        - { src: "{{ tools_install_dir }}/bin/lab-boot-sync", dest: "lab-boot-sync" }
+        - { src: "{{ tools_install_dir }}/bin/lab-man", dest: "lab-man" }
+        - { src: "{{ tools_install_dir }}/bin/sync-ops-tools", dest: "sync-ops-tools" }
+        - { src: "{{ tools_install_dir }}/bin/sync-ssh-config", dest: "sync-ssh-config" }
+        - { src: "{{ tools_install_dir }}/bin/sync-ssh-keys", dest: "sync-ssh-keys" }
+        - { src: "{{ tools_install_dir }}/bin/generate-host-ssh-key", dest: "generate-host-ssh-key" }
+        - { src: "{{ tools_install_dir }}/bin/revoke-host-ssh-key", dest: "revoke-host-ssh-key" }
+        - { src: "{{ tools_install_dir }}/bin/render-node-doc", dest: "render-node-doc" }
+
+    - name: 部署開機金鑰自癒服務單元 (/etc/systemd/system/lab-boot-sync.service)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lab-boot-sync.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=OpenLabOps Non-7/24 Node Boot Public Key Synchronizer
+          Documentation=https://github.com/openlab/openlabops
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          RemainAfterExit=yes
+          ExecStart={{ bin_symlink_dir }}/lab-boot-sync
+          StandardOutput=journal
+          StandardError=journal
+          TimeoutStartSec=60
+
+          [Install]
+          WantedBy=multi-user.target
+      when: (ansible_facts.service_mgr | default('')) == 'systemd'
+      failed_when: false
+
+    - name: 啟用開機金鑰自癒服務 (lab-boot-sync.service)
+      ansible.builtin.systemd:
+        name: lab-boot-sync.service
+        daemon_reload: yes
+        enabled: yes
+      when: (ansible_facts.service_mgr | default('')) == 'systemd'
+      failed_when: false
+
+    - name: 清理舊版廢棄軟連結與歷史目錄
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ bin_symlink_dir }}/lab-ctl"
+        - "{{ bin_symlink_dir }}/server-setup"
+        - "{{ bin_symlink_dir }}/encrypt-gitea-token"
+        - "{{ tools_install_dir }}/python"
+        - "{{ tools_install_dir }}/script"
+        - "/usr/local/openlab"
+      failed_when: false
+
+    # --------------------------------------------------------------------------
+    # 6. 使用者主目錄環境標準化與 SSH Config 同步
+    # --------------------------------------------------------------------------
+    - name: 確保使用者 SSH 目錄權限 (0700)
+      ansible.builtin.file:
+        path: "/home/{{ target_user }}/.ssh"
+        state: directory
+        owner: "{{ target_user }}"
+        mode: '0700'
+      when: target_user != 'root'
+
+    - name: 執行 sync-ssh-config 同步標準 ~/.ssh/config 連線設定
+      ansible.builtin.command: "{{ bin_symlink_dir }}/sync-ssh-config"
+      become_user: "{{ target_user }}"
+      failed_when: false
+      changed_when: true
+
+    # --------------------------------------------------------------------------
+    # 7. 完成提示
+    # --------------------------------------------------------------------------
+    - name: 顯示安裝完成資訊與後續操作指引
+      ansible.builtin.debug:
+        msg:
+          - "=========================================================================="
+          - "✅ [SUCCESS] OpenLabOps Homelab Tools 已成功安裝至 {{ tools_install_dir }}"
+          - "=========================================================================="
+          - "系統命令已就緒:"
+          - "  • lab-tools          : 叢集維運控制台 (TUI 儀表板)"
+          - "  • lab-setup          : 伺服器初建與整合套件"
+          - "  • lab-ssh            : SSH 金鑰輪換、管理與部署套件 (含 -g 本機生成)"
+          - "  • lab-info           : 節點硬體與網路審計資訊"
+          - "  • lab-backup         : 備份管理套件"
+          - "  • sync-ssh-config     : 同步標準 ~/.ssh/config 連線別名設定"
+          - "--------------------------------------------------------------------------"
+          - "後續設定建議步驟:"
+          - "  1. 配置 {{ tools_install_dir }}/.gitea_token (權限 0600)"
+          - "  2. 執行 `sync-ssh-config` 確保本機具備標準連線別名"
+          - "  3. 執行 `lab-ssh -g` 或 `generate-host-ssh-key` 產生端點金鑰"
+          - "  4. 透過 `lab-tools` 或 `lab-setup` 派發遠端部署任務"
+          - "=========================================================================="

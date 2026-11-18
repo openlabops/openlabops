@@ -1,0 +1,56 @@
+---
+# ==============================================================================
+# Playbook: Deploy Client Endpoint SSH Public Key to Target Server Hosts
+# Target Hosts: servers (or override via --extra-vars "target_hosts=...")
+# Neutralized for OpenLabOps / OpenLabOps Operations Engine
+# ==============================================================================
+- name: Deploy Client Endpoint SSH Public Key to Target Servers
+  hosts: "{{ target_hosts | default('servers') }}"
+  gather_facts: false
+
+  vars:
+    endpoint_name: "{{ endpoint | default('workstation') }}"
+    endpoint_user: "{{ target_user | default(admin_user | default('labadmin')) }}"
+    endpoint_key_options: "{{ key_options | default('from=\"192.168.1.0/24\"') }}"
+    endpoint_comment: "{{ endpoint_name }}-client"
+
+  tasks:
+    - name: 依優先順序探測端點公鑰檔案
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      loop:
+        - "{{ endpoint_pub_key_path | default('/nonexistent') }}"
+        - "{{ lookup('env', 'HOME') + '/.ssh/' + endpoint_name + '.pub' }}"
+        - "/tmp/openlab-secrets/ssh-key/{{ endpoint_name }}.pub"
+        - "{{ lookup('env', 'HOME') + '/openlab-secrets/ssh-key/' + endpoint_name + '.pub' }}"
+      register: endpoint_pub_candidates
+
+    - name: 確定端點公鑰檔案路徑
+      ansible.builtin.set_fact:
+        resolved_endpoint_pub_path: "{{ (endpoint_pub_candidates.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+
+    - name: 讀取端點公鑰內容
+      ansible.builtin.slurp:
+        src: "{{ resolved_endpoint_pub_path }}"
+      delegate_to: localhost
+      register: endpoint_pub_content
+      when: resolved_endpoint_pub_path != ''
+
+    - name: 部署端點公鑰至目標主機 authorized_keys
+      ansible.posix.authorized_key:
+        user: "{{ endpoint_user }}"
+        key: "{{ endpoint_pub_content.content | b64decode | trim }}"
+        key_options: "{{ endpoint_key_options }}"
+        state: present
+        exclusive: false
+        comment: "{{ endpoint_comment }}"
+      when: resolved_endpoint_pub_path != ''
+      become: true
+      register: deploy_key_res
+
+    - name: 顯示部署結果
+      ansible.builtin.debug:
+        msg: >-
+          Host {{ inventory_hostname }} ({{ ansible_host }}):
+          {{ endpoint_name + ' SSH key deployed successfully' if (deploy_key_res is defined and deploy_key_res.changed) else endpoint_name + ' SSH key already present' if (resolved_endpoint_pub_path != '') else 'Skipped: ' + endpoint_name + '.pub file not found' }}

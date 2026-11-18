@@ -1,0 +1,121 @@
+networks:
+  lab-mock-net:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
+          gateway: 172.28.0.1
+
+services:
+  mock-gitea:
+    image: gitea/gitea:latest
+    container_name: mock-gitea
+    environment:
+      - USER_UID=1000
+      - USER_GID=1000
+      - GITEA__security__INSTALL_LOCK=true
+      - GITEA__server__DOMAIN=172.28.0.2
+      - GITEA__server__SSH_DOMAIN=172.28.0.2
+      - GITEA__server__HTTP_PORT=3000
+      - GITEA__server__ROOT_URL=http://172.28.0.2:3000/
+      - GITEA__server__SSH_PORT=22
+      - GITEA__actions__ENABLED=true
+      - GITEA__actions__DEFAULT_ACTIONS_URL=github
+    networks:
+      lab-mock-net:
+        ipv4_address: 172.28.0.2
+    restart: unless-stopped
+
+  mock-act-runner:
+    build:
+      context: ../../extensions/containers/gitea-runner
+      dockerfile: Dockerfile
+    container_name: mock-act-runner
+    hostname: mock-act-runner
+    environment:
+      - GITEA_INSTANCE_URL=http://172.28.0.2:3000
+      - GITEA_RUNNER_NAME=mock-act-runner
+      - GITEA_RUNNER_LABELS=ansible:host,native:host,ubuntu-latest:host
+    extra_hosts:
+      - "mock-gitea:172.28.0.2"
+    networks:
+      lab-mock-net:
+        ipv4_address: 172.28.0.3
+    restart: unless-stopped
+
+  mock-console:
+    build:
+      context: .
+      dockerfile: Dockerfile.console
+    container_name: mock-console
+    hostname: mock-console
+    environment:
+      - GITEA_URL=http://172.28.0.2:3000
+    extra_hosts:
+      - "mock-gitea:172.28.0.2"
+      - "gitea.mock:172.28.0.2"
+    networks:
+      lab-mock-net:
+        ipv4_address: 172.28.0.5
+    volumes:
+      - ./entrypoint_console.sh:/home/labadmin/entrypoint_console.sh:ro
+      - ../..:/workspace:ro
+    restart: unless-stopped
+
+
+
+  mock-arch:
+
+    build:
+      context: .
+      dockerfile: Dockerfile.arch
+    container_name: mock-arch
+    hostname: mock-arch
+    networks:
+      lab-mock-net:
+        ipv4_address: 172.28.0.10
+    restart: unless-stopped
+
+  mock-photon:
+    build:
+      context: .
+      dockerfile: Dockerfile.photon
+    container_name: mock-photon
+    hostname: mock-photon
+    networks:
+      lab-mock-net:
+        ipv4_address: 172.28.0.20
+    restart: unless-stopped
+
+  mock-oracle:
+    build:
+      context: .
+      dockerfile: Dockerfile.oracle
+    container_name: mock-oracle
+    hostname: mock-oracle
+    networks:
+      lab-mock-net:
+        ipv4_address: 172.28.0.30
+    restart: unless-stopped
+
+  mock-debian:
+    build:
+      context: .
+      dockerfile: Dockerfile.debian
+    container_name: mock-debian
+    hostname: mock-debian
+    networks:
+      lab-mock-net:
+        ipv4_address: 172.28.0.40
+    restart: unless-stopped
+
+  mock-alpine:
+    build:
+      context: .
+      dockerfile: Dockerfile.alpine
+    container_name: mock-alpine
+    hostname: mock-alpine
+    networks:
+      lab-mock-net:
+        ipv4_address: 172.28.0.50
+    restart: unless-stopped

@@ -1,0 +1,81 @@
+# ==============================================================================
+# OpenLabOps Site Configuration Manifest (conf/openlab.manifest.yml)
+# USER-EDITABLE CLUSTER TOPOLOGY & SITE DECLARATION (AIR-GAPPED FLAT LAN)
+# Framework schema & repository definitions are governed by conf/core.manifest.yml.
+# ==============================================================================
+
+# 1. 叢集身份與環境宣告
+cluster:
+  name: "OpenLab"
+  domain: "lab"
+  admin_user: "labadmin"
+  ansible_user: "ansible"
+  timezone: "UTC"
+  locale: "en_US.UTF-8"
+
+# 2. 本地 Gitea 與平臺實例定義 (Air-Gapped & Local-First)
+git_platform:
+  host: "gitea.lab"
+  ip: "192.168.1.90"
+  ssh_port: 22
+  http_port: 3000
+  org: "OpenLabOps"
+  repo_prefix: "openlab"
+
+# 3. 三大核心語意金鑰實體宣告 (Canonical Keys Mapping)
+# 映射三大架構中性角色 (ansible, user, git) 至 OpenLabOps 站點實體金鑰檔名
+keys:
+  ansible: "ansible.key"                   # Ansible 自動化連線私鑰 (目標帳號: ansible)
+  user: "id_user.key"                      # 管理者通用私鑰 (端點依 $hostname.key 動態生成)
+  git: "git.key"                           # 版本控制平台 Gitea/Git 存取私鑰
+
+# 4. 網段實體定義 (Flat LAN 單一私有網段)
+networks:
+  flat_lan: "192.168.1.0/24"              # 單一家庭或實驗室區域網路 (Flat LAN)
+  service_lan: "192.168.1.0/24"
+  gateway_ip: "192.168.1.1"
+  dns_servers:
+    - "192.168.1.1"
+
+# 5. 核心平台服務實例 (Services)
+services:
+  gitea:
+    ip: "192.168.1.90"
+    http_port: 3000
+    ssh_port: 22
+  docker_host:
+    host: "localhost"                   # 預設本地或指定遠端 Docker 伺服器
+    ssh_user: "labadmin"
+    ssh_port: 22
+
+# 6. 叢集受控主機清單 (遵循 Ansible 階層群組精神，宣告通用 Linux 伺服器)
+inventory:
+  dev:
+    hosts:
+      localhost:
+        ansible_host: "127.0.0.1"
+  servers:
+    hosts:
+      lab-node1:
+        ansible_host: "192.168.1.10"
+      lab-node2:
+        ansible_host: "192.168.1.20"
+
+# 7. 標準擴充功能體系宣告 (Extensions Framework)
+# 遵循「有填入必要條件就支援，沒有就維持純本地氣隙」原則
+extensions:
+  # 外部 GitHub 聯邦與 SSH 金鑰管理 (選配：填入參數即啟用，未填則維持氣隙)
+  github:
+    enabled: false                      # 預設關閉以符合 [INV-02] 氣隙原則；填入 owner 即自動支援
+    owner: ""                           # GitHub 組織或帳號
+    ssh_host: "github.com"
+    key_role: "git"                     # 映射至 keys.git (git.key)
+    mirrored_repos: []
+    sync_public_key: false
+
+  # 外部 Compose 集中管理倉庫加掛宣告 (可選)
+  compose_repo:
+    enabled: false
+    repo_url: ""
+    mount_path: "/opt/compose"
+

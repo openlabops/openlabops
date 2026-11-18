@@ -1,0 +1,17 @@
+---
+# ==============================================================================
+# Role Defaults: baseline
+# 支援外部參數/範本動態注入之系統基線配置 (Data-Driven Baseline Schema)
+# ==============================================================================
+baseline_manage_timezone: true
+baseline_manage_packages: true
+baseline_manage_sshd: true
+baseline_bootstrap_python: false
+
+# 時區與語系設定
+baseline_timezone: "{{ global_timezone | default('UTC') }}"
+baseline_locale: "{{ global_locale | default('en_US.UTF-8') }}"
+
+# 共通基礎套件清單 (可直接覆寫，或透過 baseline_packages_extra 額外追加)
+baseline_packages: "{{ common_packages | default(['curl', 'wget', 'git', 'rsync', 'htop', 'vim']) }}"
+baseline_packages_extra: []

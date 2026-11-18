@@ -1,0 +1,99 @@
+---
+# ==============================================================================
+# 編輯器配置部署 (依節點是否安裝 nvim / vim 決定，來源與使用者支援外部參數完全注入)
+# ==============================================================================
+- name: 探測目標節點是否安裝 Neovim (nvim)
+  ansible.builtin.command: which nvim
+  register: nvim_check
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+- name: 探測目標節點是否安裝 Vim (vim)
+  ansible.builtin.command: which vim
+  register: vim_check
+  check_mode: false
+  changed_when: false
+  failed_when: false
+
+# --- 2.1 Vim 編輯器配置部署 ---
+- name: "[Vim] 部署通用 .vimrc 至 /root/.vimrc"
+  ansible.builtin.copy:
+    src: "{{ dotfiles_vimrc_src }}"
+    dest: /root/.vimrc
+    owner: root
+    group: "{{ 'wheel' if (os_family | default('')) == 'BSD' else 'root' }}"
+    mode: '0644'
+  when:
+    - vim_check.rc is defined and vim_check.rc == 0
+    - dotfiles_manage_root_dotfiles | bool
+
+- name: "[Vim] 部署通用 .vimrc 至 {{ dotfiles_target_home }}/.vimrc"
+  ansible.builtin.copy:
+    src: "{{ dotfiles_vimrc_src }}"
+    dest: "{{ dotfiles_target_home }}/.vimrc"
+    owner: "{{ dotfiles_target_user }}"
+    mode: '0644'
+  when:
+    - vim_check.rc is defined and vim_check.rc == 0
+    - target_user_home_stat.stat.exists
+
+# --- 2.2 Neovim + NvChad 配置部署 ---
+- name: "[Neovim/User] 檢查目標使用者 ({{ dotfiles_target_user }}) 的 NvChad 倉庫是否已初始化"
+  ansible.builtin.stat:
+    path: "{{ dotfiles_target_home }}/.config/nvim/.git"
+  register: user_nvim_git
+  when:
+    - nvim_check.rc is defined and nvim_check.rc == 0
+    - target_user_home_stat.stat.exists
+
+- name: "[Neovim/User] 若未初始化，Git Clone NvChad Starter 官方基礎庫"
+  ansible.builtin.git:
+    repo: "https://github.com/NvChad/starter.git"
+    dest: "{{ dotfiles_target_home }}/.config/nvim"
+    depth: 1
+    update: no
+  become_user: "{{ dotfiles_target_user }}"
+  when:
+    - nvim_check.rc is defined and nvim_check.rc == 0
+    - target_user_home_stat.stat.exists
+    - not (user_nvim_git.stat.exists | default(false))
+
+- name: "[Neovim/User] 套用客製化組態至 {{ dotfiles_target_home }}/.config/nvim"
+  ansible.builtin.copy:
+    src: "{{ dotfiles_nvim_src }}"
+    dest: "{{ dotfiles_target_home }}/.config/nvim/"
+    owner: "{{ dotfiles_target_user }}"
+    mode: preserve
+  when:
+    - nvim_check.rc is defined and nvim_check.rc == 0
+    - target_user_home_stat.stat.exists
+
+- name: "[Neovim/Root] 檢查 root 的 NvChad 倉庫是否已初始化"
+  ansible.builtin.stat:
+    path: /root/.config/nvim/.git
+  register: root_nvim_git
+  when:
+    - nvim_check.rc is defined and nvim_check.rc == 0
+    - dotfiles_manage_root_dotfiles | bool
+
+- name: "[Neovim/Root] 若未初始化，Git Clone NvChad Starter 官方基礎庫"
+  ansible.builtin.git:
+    repo: "https://github.com/NvChad/starter.git"
+    dest: /root/.config/nvim
+    depth: 1
+    update: no
+  when:
+    - nvim_check.rc is defined and nvim_check.rc == 0
+    - dotfiles_manage_root_dotfiles | bool
+    - not (root_nvim_git.stat.exists | default(false))
+
+- name: "[Neovim/Root] 套用客製化組態至 /root/.config/nvim"
+  ansible.builtin.copy:
+    src: "{{ dotfiles_nvim_src }}"
+    dest: /root/.config/nvim/
+    owner: root
+    mode: preserve
+  when:
+    - nvim_check.rc is defined and nvim_check.rc == 0
+    - dotfiles_manage_root_dotfiles | bool

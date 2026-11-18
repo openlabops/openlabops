@@ -1,0 +1,50 @@
+# ==============================================================================
+# OpenLabOps Day-0 Mock Fleet Onboarding Manifest (tests/conf/openlab.manifest.test.yml)
+# Declarative Parameter Specification for Open Source Testing
+# ==============================================================================
+
+cluster: "OpenLab-Mock"
+org: "OpenLabOps"
+repo_prefix: "openlab"
+gitea_host: "172.28.0.2:3000"
+gitea_url: "http://172.28.0.2:3000"
+gitea_user: "labadmin"
+gitea_password: "labtest123"
+network_cidr: "172.28.0.0/16"
+default_target_user: "ansible"
+
+targets:
+  - name: "mock-arch"
+    ip: "172.28.0.10"
+    initial_user: "labadmin"
+    initial_password: "labtest123"
+    scenario: "password_only"
+    target_user: "ansible"
+
+  - name: "mock-photon"
+    ip: "172.28.0.20"
+    initial_user: "labadmin"
+    initial_password: "labtest123"
+    scenario: "password_only"
+    target_user: "ansible"
+
+  - name: "mock-oracle"
+    ip: "172.28.0.30"
+    initial_user: "labadmin"
+    initial_password: "labtest123"
+    scenario: "mixed_key_and_password"
+    target_user: "ansible"
+
+  - name: "mock-debian"
+    ip: "172.28.0.40"
+    initial_user: "labadmin"
+    initial_password: "labtest123"
+    scenario: "password_only"
+    target_user: "ansible"
+
+  - name: "mock-alpine"
+    ip: "172.28.0.50"
+    initial_user: "labadmin"
+    initial_password: "labtest123"
+    scenario: "mixed_key_and_password"
+    target_user: "ansible"

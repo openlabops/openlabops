@@ -1,0 +1,45 @@
+---
+# ==============================================================================
+# Role Defaults: tools
+# 支援外部參數/範本動態注入之工具鏈配置 (Data-Driven Tools Schema)
+# ==============================================================================
+tools_suite_name: "{{ cluster_tools_name | default('openlab') }}"
+tools_install_dir: "/usr/local/bin/{{ tools_suite_name }}"
+bin_symlink_dir: "/usr/local/bin"
+token_config_dir: "{{ tools_install_dir }}"
+
+tools_gitea_url: "{{ gitea_url | default('http://gitea.lab') }}"
+tools_repo_owner: "{{ repo_owner | default('OpenLabOps') }}"
+tools_repo_name: "{{ repo_tools_name | default('openlab-tools') }}"
+tools_git_repo: "{{ tools_gitea_url }}/{{ tools_repo_owner }}/{{ tools_repo_name }}.git"
+
+tools_source_path: ""
+control_tools_candidates:
+  - "/tmp/{{ tools_repo_name }}"
+  - "{{ lookup('env', 'HOME') }}/{{ tools_repo_name }}"
+
+cli_symlinks:
+  - { src: "bin/lab-tools", dest: "lab-tools" }
+  - { src: "bin/lab-node", dest: "lab-node" }
+  - { src: "bin/lab-status", dest: "lab-status" }
+  - { src: "bin/lab-upgrade", dest: "lab-upgrade" }
+  - { src: "bin/lab-setup", dest: "lab-setup" }
+  - { src: "bin/lab-ssh", dest: "lab-ssh" }
+  - { src: "bin/lab-info", dest: "lab-info" }
+  - { src: "bin/lab-backup", dest: "lab-backup" }
+  - { src: "bin/lab-config", dest: "lab-config" }
+  - { src: "bin/lab-man", dest: "lab-man" }
+  - { src: "bin/sync-ops-tools", dest: "sync-ops-tools" }
+  - { src: "bin/sync-ssh-config", dest: "sync-ssh-config" }
+  - { src: "bin/sync-ssh-keys", dest: "sync-ssh-keys" }
+  - { src: "bin/generate-host-ssh-key", dest: "generate-host-ssh-key" }
+  - { src: "bin/revoke-host-ssh-key", dest: "revoke-host-ssh-key" }
+  - { src: "bin/render-node-doc", dest: "render-node-doc" }
+
+legacy_cleanup:
+  - "{{ bin_symlink_dir }}/lab-ctl"
+  - "{{ bin_symlink_dir }}/server-setup"
+  - "{{ bin_symlink_dir }}/encrypt-gitea-token"
+  - "{{ tools_install_dir }}/python"
+  - "{{ tools_install_dir }}/script"
+  - "/usr/local/{{ tools_suite_name }}"

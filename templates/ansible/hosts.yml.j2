@@ -1,0 +1,35 @@
+all:
+  hosts:
+{%- if inventory is defined and inventory.hosts is defined %}
+{%- for h_name, h_info in inventory.hosts.items() %}
+    {{ h_name }}:
+      ansible_host: {{ h_info.ansible_host | default(h_info) }}
+{%- endfor %}
+{%- endif %}
+
+  children:
+{%- if inventory is defined %}
+{%- for g_name, g_info in inventory.items() %}
+{%- if g_name != 'hosts' and g_info is mapping %}
+    {{ g_name }}:
+{%- if g_info.hosts is defined and g_info.hosts is mapping %}
+      hosts:
+{%- for h_name, h_info in g_info.hosts.items() %}
+        {{ h_name }}:
+          ansible_host: {{ h_info.ansible_host | default(h_info) }}
+{%- if h_info.ansible_connection is defined %}
+          ansible_connection: {{ h_info.ansible_connection }}
+{%- elif h_name == 'localhost' %}
+          ansible_connection: local
+{%- endif %}
+{%- endfor %}
+{%- endif %}
+{%- if g_info.children is defined and g_info.children is mapping %}
+      children:
+{%- for c_name, c_info in g_info.children.items() %}
+        {{ c_name }}:
+{%- endfor %}
+{%- endif %}
+{%- endif %}
+{%- endfor %}
+{%- endif %}

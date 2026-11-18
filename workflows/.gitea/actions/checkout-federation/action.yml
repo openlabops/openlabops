@@ -1,0 +1,89 @@
+name: "Checkout Homelab Federation Repositories"
+description: "Shallow clones required Homelab federation repositories (ansible, secrets, tools, configs) from internal Gitea"
+inputs:
+  gitea_host:
+    description: "Gitea hostname or IP"
+    required: false
+    default: "gitea.lab"
+  gitea_port:
+    description: "Gitea HTTP port (leave empty for standard port)"
+    required: false
+    default: ""
+  gitea_proto:
+    description: "Gitea protocol (http or https)"
+    required: false
+    default: "http"
+  org_name:
+    description: "Gitea organization name"
+    required: false
+    default: "OpenLabOps"
+  token:
+    description: "OAuth2 authentication token"
+    required: true
+  repos:
+    description: "Space-separated repository names to clone (e.g., openlab-ansible openlab-secrets)"
+    required: false
+    default: "openlab-ansible openlab-secrets"
+  dest_dir:
+    description: "Parent destination directory"
+    required: false
+    default: "/tmp"
+  depth:
+    description: "Git clone depth"
+    required: false
+    default: "1"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Clone Requested Repositories
+      shell: sh
+      env:
+        HOST: ${{ inputs.gitea_host }}
+        PORT: ${{ inputs.gitea_port }}
+        PROTO: ${{ inputs.gitea_proto }}
+        ORG: ${{ inputs.org_name }}
+        TOKEN: ${{ inputs.token }}
+        DEST: ${{ inputs.dest_dir }}
+        DEPTH: ${{ inputs.depth }}
+        REPOS: ${{ inputs.repos }}
+      run: |
+
+        PORT_STR=""
+        if [ -n "$PORT" ] && [ "$PORT" != "80" ] && [ "$PORT" != "443" ]; then
+          PORT_STR=":${PORT}"
+        fi
+
+        mkdir -p "$DEST"
+        echo "📦 [Action: checkout-federation] Cloning repositories from ${PROTO}://${HOST}${PORT_STR}/${ORG}..."
+
+        for repo in $REPOS; do
+          TARGET_PATH="${DEST}/${repo}"
+          if [ -d "$TARGET_PATH/.git" ]; then
+            echo "  [•] Repository ${repo} already exists at ${TARGET_PATH}, fetching updates..."
+            git -C "$TARGET_PATH" fetch --depth "$DEPTH" origin
+          else
+            echo "  [•] Cloning ${repo} into ${TARGET_PATH} (depth: ${DEPTH})..."
+            rm -rf "$TARGET_PATH"
+            if git clone --quiet --depth "$DEPTH" "${PROTO}://oauth2:${TOKEN}@${HOST}${PORT_STR}/${ORG}/${repo}.git" "$TARGET_PATH" 2>/dev/null; then
+              :
+            else
+              case "$repo" in
+                *-ansible|*-tools)
+                  PREFIX="${repo%-*}"
+                  SFX="${repo##*-}"
+                  OPS_REPO="${PREFIX}-operations"
+                  OPS_PATH="${DEST}/${OPS_REPO}"
+                  if [ ! -d "$OPS_PATH/.git" ]; then
+                    git clone --quiet --depth "$DEPTH" "${PROTO}://oauth2:${TOKEN}@${HOST}${PORT_STR}/${ORG}/${OPS_REPO}.git" "$OPS_PATH"
+                  fi
+                  ln -sfn "${OPS_PATH}/${SFX}" "$TARGET_PATH"
+                  ;;
+                *)
+                  git clone --quiet --depth "$DEPTH" "${PROTO}://oauth2:${TOKEN}@${HOST}${PORT_STR}/${ORG}/${repo}.git" "$TARGET_PATH"
+                  ;;
+              esac
+            fi
+          fi
+        done
+        echo "✅ [Action: checkout-federation] All requested repositories ready."

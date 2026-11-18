@@ -1,0 +1,12 @@
+---
+# ==============================================================================
+# 時區標準化 (預設 UTC)
+# ==============================================================================
+- name: 設定 Linux 系統時區 ({{ baseline_timezone }})
+  ansible.builtin.file:
+    src: "/usr/share/zoneinfo/{{ baseline_timezone }}"
+    dest: /etc/localtime
+    state: link
+    force: yes
+  when: (ansible_facts.system | default('Linux')) == 'Linux'
+

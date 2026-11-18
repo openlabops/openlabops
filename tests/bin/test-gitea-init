@@ -1,0 +1,90 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Atomic Test Helper: Initialize Sandbox Gitea & Pre-seed Legacy Keys
+# File: tests/bin/test-gitea-init
+# ==============================================================================
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+PROJECT_NAME="$(basename "${REPO_ROOT}")"
+
+GITEA_MODE="${GITEA_MODE:-standalone}"
+GITEA_URL="${GITEA_URL:-http://172.28.0.2:3000}"
+
+push_to_gitea() {
+    local target_repo_url="$1"
+    cd "${REPO_ROOT}"
+    # Check if there are uncommitted or untracked changes
+    if ! git diff-index --quiet HEAD -- 2>/dev/null || [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+        echo "  • Detecting live workspace modifications; synchronizing working tree to Gitea..."
+        local temp_sync_dir
+        temp_sync_dir=$(mktemp -d /tmp/lab_sync_git_XXXXXX)
+        git clone --shared "${REPO_ROOT}" "${temp_sync_dir}" >/dev/null 2>&1
+        rsync -a --exclude='.git' --delete "${REPO_ROOT}/" "${temp_sync_dir}/"
+        (
+            cd "${temp_sync_dir}"
+            git add -A >/dev/null 2>&1
+            git -c user.name="Test Ops Sync" -c user.email="ops@openlab.local" commit -m "test: auto-sync live working tree to mock-gitea" >/dev/null 2>&1 || true
+            git push -q -f "${target_repo_url}" HEAD:master >/dev/null 2>&1 || true
+            git push -q -f "${target_repo_url}" HEAD:main >/dev/null 2>&1 || true
+        )
+        rm -rf "${temp_sync_dir}"
+    else
+        git push -q -f "${target_repo_url}" HEAD:master 2>/dev/null || true
+        git push -q -f "${target_repo_url}" HEAD:main 2>/dev/null || true
+    fi
+}
+
+if [[ "${GITEA_MODE}" == "standalone" ]]; then
+    echo "[•] Initializing standalone Gitea repository & admin account (mock-gitea: 172.28.0.2:3000)..."
+    docker exec -u git mock-gitea gitea admin user create --username labadmin --password labtest123 --email admin@openlab.local --admin --must-change-password=false 2>/dev/null || true
+    curl -s -u labadmin:labtest123 -H "Content-Type: application/json" -X POST http://172.28.0.2:3000/api/v1/user/repos -d "{\"name\": \"${PROJECT_NAME}\", \"private\": false}" >/dev/null 2>&1 || true
+    push_to_gitea "http://labadmin:labtest123@172.28.0.2:3000/labadmin/${PROJECT_NAME}.git"
+    echo "  [✓] Gitea repository http://172.28.0.2:3000/labadmin/${PROJECT_NAME}.git synchronized."
+
+    # Register Gitea Act Runner (with ansible:host label)
+    if docker ps --format '{{.Names}}' | grep -q "^mock-act-runner$"; then
+        echo "[•] Registering Act Runner (mock-act-runner) with Gitea Actions (label: ansible:host)..."
+        RUNNER_TOKEN=$(docker exec -u git mock-gitea gitea --config /data/gitea/conf/app.ini actions generate-runner-token 2>/dev/null || docker exec -u git mock-gitea gitea actions generate-runner-token 2>/dev/null || curl -s -u labadmin:labtest123 http://172.28.0.2:3000/api/v1/admin/runners/registration-token 2>/dev/null | grep -o '"token":"[^"]*"' | cut -d'"' -f4 || true)
+        if [ -n "${RUNNER_TOKEN}" ]; then
+            docker exec mock-act-runner sh -c "echo '${RUNNER_TOKEN}' > /data/token" 2>/dev/null || true
+            sleep 1
+            if ! docker exec mock-act-runner test -f /data/.runner 2>/dev/null; then
+                docker exec mock-act-runner act_runner register --no-interactive --instance http://172.28.0.2:3000 --token "${RUNNER_TOKEN}" --name mock-act-runner --labels "ansible:host,native:host,ubuntu-latest:host" 2>/dev/null || true
+                docker restart mock-act-runner >/dev/null 2>&1 || true
+            fi
+            echo "  [✓] Gitea Act Runner registered and running with label 'ansible:host'."
+        fi
+    fi
+elif [[ "${GITEA_MODE}" == "dind" ]]; then
+    echo "[•] Initializing node embedded Gitea repository & admin account (mock-node-gitea: 172.28.0.20:3000)..."
+    docker exec -u git mock-node-gitea gitea admin user create --username labadmin --password labtest123 --email labadmin@openlab.local --admin --must-change-password=false 2>/dev/null || true
+    curl -s -u labadmin:labtest123 -H "Content-Type: application/json" -X POST http://172.28.0.20:3000/api/v1/user/repos -d "{\"name\": \"${PROJECT_NAME}\", \"private\": false}" >/dev/null 2>&1 || true
+    push_to_gitea "http://labadmin:labtest123@172.28.0.20:3000/labadmin/${PROJECT_NAME}.git"
+    echo "  [✓] Node embedded Gitea repository http://172.28.0.20:3000/labadmin/${PROJECT_NAME}.git synchronized."
+elif [[ "${GITEA_MODE}" == "external" ]]; then
+    echo "[•] External Gitea Mode: Synchronizing repository with ${GITEA_URL}..."
+    push_to_gitea "${GITEA_URL}/labadmin/${PROJECT_NAME}.git"
+    echo "  [✓] External Gitea repository targeted at ${GITEA_URL}/labadmin/${PROJECT_NAME}.git"
+elif [[ "${GITEA_MODE}" == "local" ]]; then
+    echo "[•] Local Direct Mode: Skipping Gitea repository synchronization (using direct workspace clone)."
+fi
+
+echo "[•] Pre-seeding legacy installer keys for mixed-scenario targets (mock-oracle, mock-alpine)..."
+TEMP_LEGACY_DIR=$(mktemp -d /tmp/lab_legacy_test_XXXXXX)
+ssh-keygen -t ed25519 -N "" -f "${TEMP_LEGACY_DIR}/id_legacy" -C "legacy-installer@mock" >/dev/null 2>&1
+LEGACY_PUB=$(cat "${TEMP_LEGACY_DIR}/id_legacy.pub")
+
+docker exec mock-oracle sh -c "mkdir -p /home/labadmin/.ssh && echo '${LEGACY_PUB}' > /home/labadmin/.ssh/authorized_keys && chown -R labadmin:wheel /home/labadmin/.ssh && chmod 0700 /home/labadmin/.ssh && chmod 0600 /home/labadmin/.ssh/authorized_keys"
+docker exec mock-alpine sh -c "mkdir -p /home/labadmin/.ssh && echo '${LEGACY_PUB}' > /home/labadmin/.ssh/authorized_keys && chown -R labadmin:wheel /home/labadmin/.ssh && chmod 0700 /home/labadmin/.ssh && chmod 0600 /home/labadmin/.ssh/authorized_keys"
+
+docker exec -u labadmin mock-console mkdir -p /tmp/lab_legacy_keys
+docker cp "${TEMP_LEGACY_DIR}/id_legacy" mock-console:/tmp/lab_legacy_keys/id_legacy
+docker cp "${TEMP_LEGACY_DIR}/id_legacy.pub" mock-console:/tmp/lab_legacy_keys/id_legacy.pub
+docker exec mock-console chown -R labadmin:labadmin /tmp/lab_legacy_keys
+docker exec mock-console chmod 0600 /tmp/lab_legacy_keys/id_legacy
+docker exec mock-console chmod 0644 /tmp/lab_legacy_keys/id_legacy.pub
+rm -rf "${TEMP_LEGACY_DIR}"
+
+echo "  [✓] Legacy installer keys pre-seeded successfully."
