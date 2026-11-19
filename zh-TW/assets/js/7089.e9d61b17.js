@@ -1,0 +1,1 @@
+"use strict";(self.webpackChunkopenlabops_wiki=self.webpackChunkopenlabops_wiki||[]).push([[7089],{7089(e,s,c){c.d(s,{createArchitectureServices:()=>i.S});var i=c(5796);c(4954)}}]);
