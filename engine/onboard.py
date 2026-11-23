@@ -407,17 +407,25 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
     cleanup_ephemeral = (ephemeral_pubkey is None)
 
     try:
-        # 1. 檢查金鑰：若已有管理機之正式公鑰 (~/.ssh/<target_user>.pub)，優先採用以達成 Day-2 即時免密可達
+        # 1. 檢查金鑰：Day-0 若有傳入 ephemeral_pubkey，一律優先使用臨時引導金鑰開門，再由 Step 5 輪替為正式金鑰
+        #    僅在 Day-2 單機納管 (ephemeral_pubkey is None) 時，才直接採用管理機既有的正式金鑰 (~/.ssh/<target_user>.key)
         mgmt_pub = Path.home() / ".ssh" / f"{target_user}.pub"
         mgmt_key = Path.home() / ".ssh" / f"{target_user}.key"
+        temp_key = temp_dir / "id_ed25519"
+        temp_pub = temp_dir / "id_ed25519.pub"
 
-        if mgmt_pub.exists() and mgmt_key.exists():
-            pubkey = mgmt_pub.read_text(encoding="utf-8").strip()
+        if ephemeral_pubkey:
+            pubkey = ephemeral_pubkey.strip()
+            priv_key = temp_key
+        elif mgmt_pub.exists() and mgmt_key.exists():
+            derived_res = subprocess.run(["ssh-keygen", "-y", "-P", "", "-f", str(mgmt_key)], capture_output=True, text=True)
+            if derived_res.returncode == 0 and derived_res.stdout.strip():
+                pubkey = derived_res.stdout.strip()
+            else:
+                pubkey = mgmt_pub.read_text(encoding="utf-8").strip()
             priv_key = mgmt_key
         else:
             temp_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
-            temp_key = temp_dir / "id_ed25519"
-            temp_pub = temp_dir / "id_ed25519.pub"
             if not temp_key.exists():
                 emit(f"{C_CYAN}[1/4] Generating Ephemeral Bootstrap Key Pair (INV-02 compliant)...{C_RESET}")
                 subprocess.run([
@@ -425,7 +433,7 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
                     "-f", str(temp_key),
                     "-C", "ephemeral-bootstrap@openlab"
                 ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            pubkey = ephemeral_pubkey or temp_pub.read_text(encoding="utf-8").strip()
+            pubkey = temp_pub.read_text(encoding="utf-8").strip()
             priv_key = temp_key
 
         # 2. 準備探針腳本與執行環境 (初始探針開門不施加 from 限制，待事實採集與網段定義後再由金鑰輪轉注入)
