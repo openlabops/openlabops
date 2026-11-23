@@ -2,7 +2,7 @@
 /** @type {import('@docusaurus/types').Config} */
 const config = {
   title: 'OpenLabOps Wiki',
-  tagline: 'Zero-Dependency Declarative Homelab Operations Engine',
+  tagline: 'Zero-Dependency Declarative Homelab Operations Framework',
   url: 'https://openlabops.github.io',
   baseUrl: '/openlabops/',
   organizationName: 'openlabops',

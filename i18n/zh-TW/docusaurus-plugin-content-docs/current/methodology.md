@@ -37,7 +37,7 @@ flowchart LR
 
 ## 2. 利用現有邊界讓 `AGY-Remote` 安全參與 SRE
 
-正因為 OpenLabOps 在架構層已建立嚴密的安全與權限邊界，你可以放心地將 **AGY-Remote** 納入 Homelab 擔任 AI SRE 維運助手，而不必擔心權限失控。
+正因為 OpenLabOps 在架構層已建立嚴密的安全與權限邊界，你可以放心地將 **AGY-Remote** 納入 Homelab 擔任 AI SRE 維運助手，而不必擔心權限失控或私鑰外洩。
 
 ### 部署 `AGY-Remote`
 在 Day-0 初始化時加上 `--with-remote-dev` 即可建立遠端開發與 SRE 容器：
@@ -45,12 +45,16 @@ flowchart LR
 lab-init --with-remote-dev
 ```
 
-### 硬性邊界如何保護你的集群
+### 安全邊界內的 AI SRE 實戰工作流
 
-| 防護邊界 | 對 AI SRE (`AGY-Remote`) 的安全保障 |
-| :--- | :--- |
-| **零明文私鑰 (`[INV-02]`)** | `AGY-Remote` 本身不持有 `ansible.key` 或管理員私鑰，所有特權變更一律經由 Gitea Actions（`openlab-workflows`）派發。 |
-| **Token 爆破半徑隔離 (`[INV-03]`)** | 自動化帳號（`ci-bot`）僅能觸發工作流與寫入 CMDB 遙測（`openlab-configs`），**物理上無法篡改** `openlab-operations` 核心劇本。 |
-| **結構化唯讀遙測** | `AGY-Remote` 可透過 `lab-status --json`、`lab-status -a`（金鑰稽核）與 `node-information/node_*.json` 即時掌握全網健康度。 |
-| **非互動式 CLI 介面** | 工具支援 `--plain` / `--no-tui` / `--json`（例如 `lab-tools --plain inspect-run <ID>`），讓 AI SRE 能直接診斷 CI/CD 失敗日誌並派發修復工作流。 |
-| **CUE 與防鎖死護欄** | `cue vet ./schema/` 在部署前阻擋非法網段或角色變更，而 `lab-boot-sync` 與三階段金鑰輪替則確保 AI 操作絕不會鎖死人類管理員。 |
+1. **全網健康與安全巡檢（唯讀）**：
+   * `lab-status --json` — 取得結構化 JSON 叢集健康度遙測。
+   * `lab-status -a` — 執行 `authorized_keys` 指紋稽核，揪出未授權金鑰。
+   * `node-information/node_<hostname>.json` — 檢視即時記憶體、磁碟、容器與監聽埠狀態。
+2. **CI/CD 失敗診斷**：
+   * `lab-tools --plain inspect-run <ID>` — 免 TTY 直接拉取 Gitea Actions 執行錯誤日誌，無需對 Runner 開放原始 SSH 權限。
+3. **受控修復派發**：
+   * `AGY-Remote` 可透過 `lab-setup -s <step>`、`lab-upgrade` 或 `lab-ssh --rotate-ansible` 經由 `ci-bot` 派發預審核之 GitOps 工作流。
+   * 由於 `ci-bot` **物理上無法修改** `openlab-operations`，AI SRE 無法擅自竄改 Ansible 劇本或存取 `openlab-secrets` 私鑰。
+4. **變更前規格護欄**：
+   * 任何 Manifest 或網段調整都必須先通過 `cue vet ./schema/` 驗證才能透過 `lab-diff` / `lab-apply` 渲染，搭配 `lab-boot-sync` 與三階段金鑰輪替，確保 AI 操作絕不會鎖死人類管理員。

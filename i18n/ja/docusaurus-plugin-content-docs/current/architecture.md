@@ -6,7 +6,7 @@ sidebar_position: 2
 
 # システムアーキテクチャ
 
-OpenLabOps は「不変フレームワーク契約」「サイト宣言意図」「ライブノードテレメトリ」を厳格に 3 層へ分離し、権限境界が分離された 4 つの下流 GitOps リポジトリへ展開します。
+OpenLabOps は**ゼロ依存・宣言的 Homelab 運用フレームワーク（Operations Framework）**として設計されており、「不変フレームワーク契約」「サイト宣言意図」「ライブノードテレメトリ」を厳格に 3 層へ分離し、権限境界が分離された 4 つの下流 GitOps リポジトリへ展開します。
 
 ```mermaid
 flowchart TB
@@ -18,7 +18,7 @@ flowchart TB
     end
 
     subgraph Federation["4リポジトリ GitOps 連携"]
-        OPS["openlab-operations<br/>Playbooks + エンジン"]
+        OPS["openlab-operations<br/>Playbooks + フレームワーク"]
         WF["openlab-workflows<br/>CI/CD + Runner ディスパッチ"]
         CFG["openlab-configs<br/>CMDB + ノード事実"]
         SEC["openlab-secrets<br/>暗号化 Vault + 公開鍵"]
@@ -39,32 +39,46 @@ flowchart TB
     WF -->|"SSH 経由で Ansible 実行"| Fleet
 ```
 
-## 1. 3層分離モデル
+## 1. リポジトリ構造
+
+```text
+openlabops/
+├── bin/                        # コントロールプレーン入口 (lab-init, lab-node, lab-apply, lab-test)
+├── engine/                     # Python コアフレームワーク (compiler, classifier, discover, initialize, onboard)
+├── schema/                     # 不変 CUE 契約 (invariants, network, roles, keys, nodes)
+├── conf/                       # SSOT マニフェストと動的ノード分類 (nodes/*.json)
+├── ansible/                    # ステートレスなプレイブック、ロール、group_vars
+├── tools/                      # ゼロ依存エンドポイント・運用 CLI (bin/lab-* & lib/core/*)
+├── workflows/                  # Gitea Actions ワークフローとコンポジットアクション
+├── templates/                  # 下流リポジトリ展開テンプレート (ansible, configs, workflows)
+├── lang/                       # 多言語 i18n 辞書 (en_US.json, zh_TW.json, ja_JP.json)
+└── tests/                      # ユニットテスト、Dagger DinD E2E、マルチディストリビューション Docker サンドボックス
+```
+
+## 2. 3層分離モデル
 
 1. **Tier 1 (`core`)：不変フレームワーク仕様**
    * `conf/core.manifest.yml` および `schema/*.cue` に定義されます。
    * 4リポジトリ構成、3つの標準鍵ロール（`ansible`、`user`、`git`）、セキュリティベースライン、CUE 検証ルールを規定します。
 2. **Tier 2 (`site`)：サイト宣言意図**
    * `conf/openlab.manifest.yml` に保存されます。
-   * クラスター名、ドメイン、Flat LAN サブネット（`192.168.1.0/24`）、ゲートウェイ、管理者/Ansible ユーザー、Gitea エンドポイントを保持します。`archinstall` と同様に `lab-init` で対話的に生成・エクスポートされます。
+   * クラスター名、ドメイン、Flat LAN サブネット（`192.168.1.0/24`）、ゲートウェイ、管理者/Ansible ユーザー、Gitea エンドポイントを保持します。`archinstall` と同様に `lab-init` で対話的に生成・エクスポートされ、`--manifest` で無人再現できます。
 3. **Tier 3 (`node`)：動的マシンテレメトリ**
-   * `conf/nodes/*.json`（インベントリ分類）と `node-information/node_<hostname>.json`（CMDB ハードウェア・コンテナ・鍵情報）に保存されます。
-   * 静的マニフェストにはハードコードせず、`lab-node` と `lab-discover` で動的プローブし、`engine/classifier.py` が `ansible/inventory/hosts.yml` へコンパイルします。
+   * **インベントリ分類 (`conf/nodes/*.json`)**：分類属性（`os_family`、`distribution`、`role`、`capabilities`）のみを保持し、ハードウェアテレメトリ（`mac_address`、`cpu_cores`、`memory_mb`）は一切混在させません。
+   * **CMDB ハードウェアテレメトリ (`node-information/node_<hostname>.json`)**：`lab-discover`（`engine/bootstrap_probe.sh`）が独立してプローブし、RAM、CPU、ディスク、Docker コンテナ、待機ポート、`authorized_keys` フィンガープリントを記録します。
+   * **動的コンパイル**：`engine/classifier.py` が純粋な Python 標準ライブラリで `conf/nodes/*.json` を `ansible/inventory/hosts.yml` へコンパイルします（実行時 CUE 依存ゼロ）。
 
-## 2. 4リポジトリ連携とブラスト半径の隔離
+## 3. 4リポジトリ連携とブラスト半径の隔離
 
-CI/CD トークン侵害時の被害範囲（Blast Radius）を限定するため、下流リポジトリを 4 つに分離しています。
+| リポジトリ | 内容 | `ci-bot` 権限 |
+| :--- | :--- | :--- |
+| **`openlab-operations`** | Ansible プレイブック、ロール、フレームワーク、CLI ツール | **読み取り専用**（改変不可） |
+| **`openlab-workflows`** | Gitea Actions ワークフロー＆コンポジットアクション | **読み取り / ディスパッチ** |
+| **`openlab-configs`** | CMDB `node-information/node_*.json`、パッケージ一覧、Markdown マニュアル | **テレメトリ書き込み** |
+| **`openlab-secrets`** | 公開鍵、エンドポイント鍵レジストリ、暗号化シークレット | **鍵ポリシー参照** |
 
-* **`openlab-operations`**：Ansible プレイブック、ロール、エンジン、CLI ツール。
-* **`openlab-workflows`**：Gitea Actions ワークフロー。自動化トークン（`ci-bot`）の権限はここに限定され、`openlab-operations` のコード変更は**物理的に不可能**です。
-* **`openlab-configs`**：ノードのハードウェア事実（`node-information/node_*.json`）、パッケージ一覧、自動生成された Markdown マニュアル。
-* **`openlab-secrets`**：公開鍵、エンドポイント鍵レジストリ、暗号化シークレット。
+## 4. ゼロ依存フレームワークと Gitea Act Runner 実行モデル
 
-## 3. Flat LAN とマルチディストリビューション Linux 対応
-
-* **ネットワークスキーマ (`schema/network.cue`)**：標準的な単一サブネット（`192.168.1.0/24`）向けに設計され、サブネット重複や不正なゲートウェイ設定を CUE で防止します。
-* **対応ディストリビューション**：**Arch Linux**、**Debian**、**Ubuntu**、**Oracle Linux**、**Alpine Linux**、**VMware Photon OS** および汎用 systemd Linux をネイティブサポートします。
-
-## 4. ゼロ依存 Python エンジン
-
-すべての CLI ツール（`bin/lab-*` / `tools/bin/lab-*`）は `tools/lib/core/` を共有し、100% Python 3 標準ライブラリで実装されています。管理対象ノードに Ansible をインストールする必要はなく、Gitea Act Runner コンテナが一元的に Ansible を実行します。
+* **100% Python 標準ライブラリ (`[INV-01]`)**：組み込み `yaml_parser.py`、`urllib.request` ベースの `gitea_api.py`、`curses` ベースの `ui_curses.py` により外部依存ゼロで動作します。
+* **エンドポイント Ansible レス設計**：管理対象ノードや端末には Python 3 と OpenSSH のみ必要です。Ansible プレイブックは **Gitea Act Runner** コンテナ（`ansible-core` 内蔵）上で一元実行されます。
+* **Flat LAN とマルチディストリビューション対応**：`schema/network.cue` が Flat LAN（`192.168.1.0/24`）境界を強制し、**Arch Linux**、**Debian**、**Ubuntu**、**Oracle Linux**、**Alpine Linux**、**VMware Photon OS** をネイティブサポートします。

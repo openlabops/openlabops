@@ -5,9 +5,9 @@ title: OpenLabOps Wiki
 sidebar_position: 1
 ---
 
-# OpenLabOps：零依賴宣告式 Homelab 維運引擎
+# OpenLabOps：零依賴宣告式 Homelab 維運框架
 
-**OpenLabOps** 是一套專為現代 Homelab 與私有 Linux 集群打造的開源 GitOps 維運控制中樞。全系統採用 **100% Python 3 標準函式庫**與無狀態 Ansible 劇本建構，免除任何第三方 Python 套件依賴（`NO pip`、`NO requests`、`NO pyyaml`），開箱即具備 Day-0 互動式納管、三階段零停機 SSH 金鑰輪替、即時硬體探測與 GitOps 雙向同步能力。
+**OpenLabOps** 是一套專為現代 Homelab 與私有 Linux 集群打造的開源 GitOps 維運控制框架。全系統採用 **100% Python 3 標準函式庫**與無狀態 Ansible 劇本建構，免除任何第三方 Python 套件依賴（`NO pip`、`NO requests`、`NO pyyaml`），開箱即具備 Day-0 互動式納管、三階段零停機 SSH 金鑰輪替、即時硬體探測與 GitOps 雙向同步能力。
 
 ## 快速開始 (Quickstart)
 

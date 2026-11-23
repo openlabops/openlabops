@@ -6,7 +6,7 @@ sidebar_position: 2
 
 # System Architecture
 
-OpenLabOps is designed around strict separation of concerns: immutable framework contracts, declarative site parameters, and live probed machine telemetry are decoupled across three tiers and four downstream GitOps repositories.
+OpenLabOps is a **Zero-Dependency Declarative Homelab Operations Framework** designed around strict separation of concerns: immutable framework contracts, declarative site parameters, and live probed machine telemetry are decoupled across three tiers and four downstream GitOps repositories.
 
 ```mermaid
 flowchart TB
@@ -18,7 +18,7 @@ flowchart TB
     end
 
     subgraph Federation["4-Repo GitOps Federation"]
-        OPS["openlab-operations<br/>Playbooks + Engine"]
+        OPS["openlab-operations<br/>Playbooks + Framework"]
         WF["openlab-workflows<br/>CI/CD + Runner Dispatch"]
         CFG["openlab-configs<br/>CMDB + Node Facts"]
         SEC["openlab-secrets<br/>Encrypted Vault + Public Keys"]
@@ -39,32 +39,48 @@ flowchart TB
     WF -->|"Ansible Playbooks over SSH"| Fleet
 ```
 
-## 1. Three-Tier Separation
+## 1. Repository Topology
+
+```text
+openlabops/
+├── bin/                        # Control-plane entrypoints (lab-init, lab-node, lab-apply, lab-test)
+├── engine/                     # Core Python framework (compiler, classifier, discover, initialize, onboard)
+├── schema/                     # Immutable CUE contracts (invariants, network, roles, keys, nodes)
+├── conf/                       # SSOT manifests & dynamic node classification (nodes/*.json)
+├── ansible/                    # Stateless playbooks, roles, group_vars, and custom fact modules
+├── tools/                      # Zero-dependency endpoint & operator CLI (bin/lab-* & lib/core/*)
+├── workflows/                  # Gitea Actions workflows & composite actions
+├── templates/                  # Downstream federation templates (ansible, configs, workflows)
+├── lang/                       # Multi-locale i18n dictionaries (en_US.json, zh_TW.json, ja_JP.json)
+└── tests/                      # Unit tests, Dagger DinD E2E, and multi-distro Docker sandbox
+```
+
+## 2. Three-Tier Separation Model
 
 1. **Tier 1 (`core`): Immutable Framework Specification**
    * Stored in `conf/core.manifest.yml` and `schema/*.cue`.
    * Defines the 4-repository federation topology, canonical key roles (`ansible`, `user`, `git`), security baselines, and CUE validation rules.
 2. **Tier 2 (`site`): Site-Specific Declarative Intent**
    * Stored in `conf/openlab.manifest.yml`.
-   * Captures cluster name, domain, Flat LAN subnet (`192.168.1.0/24`), gateway, admin/ansible usernames, and Gitea endpoint. Generated interactively by `lab-init` (like `archinstall`) and exported for reproducible unattended runs.
+   * Captures cluster name, domain, Flat LAN subnet (`192.168.1.0/24`), gateway, admin/ansible usernames, and Gitea endpoint. Generated interactively by `lab-init` (inspired by `archinstall`) and exported for reproducible unattended runs via `--manifest`.
 3. **Tier 3 (`node`): Dynamic Machine Telemetry Facts**
-   * Stored in `conf/nodes/*.json` (inventory classification) and `node-information/node_<hostname>.json` (CMDB hardware/container/SSH key facts).
-   * Never hardcoded in static manifests; probed live via `lab-node` and `lab-discover`, then compiled directly into `ansible/inventory/hosts.yml` by `engine/classifier.py`.
+   * **Inventory Classification (`conf/nodes/*.json`)**: Stores only classification attributes (`os_family`, `distribution`, `role`, `capabilities`). Never stores hardware telemetry (`mac_address`, `cpu_cores`, `memory_mb`).
+   * **CMDB Hardware Telemetry (`node-information/node_<hostname>.json`)**: Probed independently by `lab-discover` (`engine/bootstrap_probe.sh`), recording RAM, CPU, disks, Docker containers, listening ports, and `authorized_keys` fingerprints.
+   * **Dynamic Compilation**: `engine/classifier.py` compiles `conf/nodes/*.json` directly into `ansible/inventory/hosts.yml` using pure Python stdlib—zero runtime CUE dependency.
 
-## 2. Four-Repository GitOps Federation & Blast-Radius Isolation
+## 3. Four-Repository GitOps Federation & Blast-Radius Isolation
 
 Instead of granting CI bots write access to Ansible playbooks, OpenLabOps splits downstream state into four repositories:
 
-* **`openlab-operations`**: Ansible playbooks, roles, engine, and CLI tools.
-* **`openlab-workflows`**: Gitea Actions workflows and composite actions. The automation token (`ci-bot`) is strictly scoped here and **physically barred** from modifying `openlab-operations`.
-* **`openlab-configs`**: Host hardware facts (`node-information/node_*.json`), package lists, and rendered Markdown node manuals.
-* **`openlab-secrets`**: Public keys, endpoint key registries, and encrypted secrets.
+| Repository | Contents | `ci-bot` Permission |
+| :--- | :--- | :--- |
+| **`openlab-operations`** | Ansible playbooks, roles, framework engine, CLI tools | **Read-Only** (physically barred from mutation) |
+| **`openlab-workflows`** | Gitea Actions workflows & composite actions | **Read / Dispatch** |
+| **`openlab-configs`** | CMDB `node-information/node_*.json`, package lists, Markdown node manuals | **Write Telemetry** |
+| **`openlab-secrets`** | Public keys, endpoint key registries, encrypted secrets | **Read Key Policies** |
 
-## 3. Flat LAN & Multi-Distro Linux Support
+## 4. Zero-Dependency Framework & Gitea Act Runner Model
 
-* **Network Schema (`schema/network.cue`)**: Pre-configured for standard Flat LAN topologies (`192.168.1.0/24`), with CUE invariants preventing overlapping subnets or invalid gateway assignments.
-* **Supported Distributions**: Native classification and package/SSH management for **Arch Linux**, **Debian**, **Ubuntu**, **Oracle Linux**, **Alpine Linux**, **VMware Photon OS**, and generic systemd Linux hosts.
-
-## 4. Zero-Dependency Python Engine
-
-All control tools (`bin/lab-*` and `tools/bin/lab-*`) share `tools/lib/core/` (`config.py`, `yaml_parser.py`, `gitea_api.py`, `live_probe.py`, `lockout.py`, `i18n.py`, `ui_curses.py`, `ui_menu.py`, `ui_theme.py`, `version.py`), written purely in the Python 3 standard library. Endpoints only need Python 3 and OpenSSH—Ansible is never required on managed nodes and runs centrally inside the Gitea Act Runner container.
+* **100% Python Standard Library (`[INV-01]`)**: Built-in `tools/lib/core/yaml_parser.py` handles YAML parsing without `pyyaml`; `gitea_api.py` uses `urllib.request` without `requests`; `ui_curses.py` uses built-in `curses`.
+* **Zero Ansible on Endpoints**: Managed hosts and operator workstations only require Python 3 and OpenSSH. All Ansible playbooks execute centrally inside the **Gitea Act Runner** container (`ansible-core` pre-installed), triggered via `gitea_api.gitea_dispatch()`.
+* **Flat LAN & Multi-Distro Support**: `schema/network.cue` enforces standard Flat LAN (`192.168.1.0/24`) boundaries, while `engine/classifier.py` natively classifies **Arch Linux**, **Debian**, **Ubuntu**, **Oracle Linux**, **Alpine Linux**, **VMware Photon OS**, and generic systemd Linux hosts.

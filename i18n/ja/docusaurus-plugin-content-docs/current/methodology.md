@@ -45,12 +45,16 @@ Day-0 導入時に `--with-remote-dev` を指定してリモート SRE コンテ
 lab-init --with-remote-dev
 ```
 
-### AI SRE を安全に保つ境界メカニズム
+### 境界内で実行できる実践的 AI SRE ワークフロー
 
-| 境界メカニズム | AI SRE (`AGY-Remote`) に対する保護 |
-| :--- | :--- |
-| **平文秘密鍵ゼロ (`[INV-02]`)** | `AGY-Remote` は生の `ansible.key` 等を保持しません。特権操作はすべて Gitea Actions（`openlab-workflows`）経由で実行されます。 |
-| **ブラスト半径の隔離 (`[INV-03]`)** | 自動化トークン（`ci-bot`）はワークフロー起動と CMDB 更新（`openlab-configs`）のみ可能で、`openlab-operations` のプレイブック改変は**物理的に不可能**です。 |
-| **構造化テレメトリ参照** | `lab-status --json`、`lab-status -a`（鍵監査）、`node-information/node_*.json` によりクラスター状態を正確に把握できます。 |
-| **非対話型 CLI 対応** | `--plain` / `--no-tui` / `--json`（例：`lab-tools --plain inspect-run <ID>`）により、AI SRE が CI 失敗ログを診断し復旧ワークフローを起動できます。 |
-| **CUE とロックアウト防止** | `cue vet ./schema/` が不正な設定変更を阻止し、`lab-boot-sync` と 3段階鍵ローテーションが管理者のロックアウトを防ぎます。 |
+1. **フリート健全性＆セキュリティトリアージ（読み取り専用）**：
+   * `lab-status --json` — 全管理ノードの構造化 JSON ヘルス情報を取得。
+   * `lab-status -a` — `authorized_keys` フィンガープリント監査で不正鍵を検知。
+   * `node-information/node_<hostname>.json` — RAM、ディスク、コンテナ、待機ポートのライブ状態を確認。
+2. **CI/CD 障害診断**：
+   * `lab-tools --plain inspect-run <ID>` — TTY や Runner への生 SSH アクセスなしで Gitea Actions の失敗ログを取得。
+3. **監査済み修復ディスパッチ**：
+   * `AGY-Remote` は `ci-bot` 経由で `lab-setup -s <step>`、`lab-upgrade`、`lab-ssh --rotate-ansible` 等の承認済みワークフローを起動。
+   * `ci-bot` は `openlab-operations` の改変が**物理的に不可能**なため、AI SRE がプレイブックを書き換えたり秘密鍵を流出させたりする心配がありません。
+4. **変更前スキーマガード**：
+   * 提案された変更は `lab-diff` / `lab-apply` 前に `cue vet ./schema/` で検証され、`lab-boot-sync` と 3段階鍵ローテーションが管理者のロックアウトを防ぎます。

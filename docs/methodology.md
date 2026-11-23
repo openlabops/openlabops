@@ -6,7 +6,7 @@ sidebar_position: 5
 
 # Antigravity Vibe Coding & AI-Assisted SRE
 
-**OpenLabOps** was built from the ground up using **Google Antigravity (AGY) Vibe Coding**—a structured human-AI engineering workflow where the human architect sets hard invariants and design intent, and AI coding agents execute implementation, testing, and verification inside strict guardrails.
+**OpenLabOps** was built from the ground up using **Google Antigravity (AGY) Vibe Coding**—a structured human-AI engineering workflow where the human architect defines hard invariants and design intent, and AI coding agents execute implementation, testing, and verification inside strict guardrails.
 
 ---
 
@@ -37,7 +37,7 @@ flowchart LR
 
 ## 2. Empowering `AGY-Remote` for Safe SRE Operations
 
-Because OpenLabOps enforces hard security and blast-radius boundaries at the architecture level, you can safely bring **AGY-Remote** into your homelab as an AI SRE assistant without giving it unchecked root/key access.
+Because OpenLabOps enforces hard security and blast-radius boundaries at the architecture level, you can safely bring **AGY-Remote** into your homelab as an AI SRE assistant without giving it unchecked root or SSH key access.
 
 ### Provisioning `AGY-Remote`
 During Day-0 bootstrap, enable the remote development/SRE container:
@@ -45,12 +45,16 @@ During Day-0 bootstrap, enable the remote development/SRE container:
 lab-init --with-remote-dev
 ```
 
-### How the Boundaries Protect Your Fleet
+### Practical AI SRE Workflows Inside Hard Boundaries
 
-| Boundary | Protection for AI SRE (`AGY-Remote`) |
-| :--- | :--- |
-| **Zero Plaintext Keys (`[INV-02]`)** | `AGY-Remote` never holds raw `ansible.key` or `user` private keys. All privileged changes are dispatched through Gitea Actions (`openlab-workflows`). |
-| **Token Blast-Radius Isolation (`[INV-03]`)** | The automation token (`ci-bot`) can trigger workflows and push CMDB telemetry (`openlab-configs`), but is **physically barred** from modifying core Ansible playbooks (`openlab-operations`). |
-| **Structured Read-Only Telemetry** | `AGY-Remote` inspects real-time cluster health and hardware state via `lab-status --json`, `lab-status -a` (key audit), and `node-information/node_*.json`. |
-| **Scriptable Non-TTY CLI** | Tools support `--plain` / `--no-tui` / `--json` (e.g., `lab-tools --plain inspect-run <ID>`), allowing AI SRE agents to diagnose failed CI/CD runs and trigger safe remediation workflows cleanly. |
-| **CUE & Lockout Guardrails** | `cue vet ./schema/` blocks invalid network/role changes before deployment, while `lab-boot-sync` and 3-phase key rotation prevent AI actions from ever locking out human administrators. |
+1. **Fleet Health & Security Triage (Read-Only)**:
+   * `lab-status --json` — Structured JSON health telemetry for every managed node.
+   * `lab-status -a` — Live `authorized_keys` fingerprint audit to detect unauthorized keys.
+   * `node-information/node_<hostname>.json` — Inspect live RAM, disks, running containers, and listening ports before proposing changes.
+2. **CI/CD Failure Diagnosis**:
+   * `lab-tools --plain inspect-run <ID>` — Pulls full Gitea Actions job logs without requiring a TTY or raw SSH access to the runner.
+3. **Audited Remediation Dispatch**:
+   * `AGY-Remote` triggers pre-approved GitOps workflows via `lab-setup -s <step>`, `lab-upgrade`, or `lab-ssh --rotate-ansible` (`ci-bot` token).
+   * Because `ci-bot` is **physically barred** from modifying `openlab-operations`, an AI SRE agent cannot rewrite Ansible playbooks or exfiltrate private keys (`openlab-secrets`).
+4. **Pre-Flight Schema Guardrails**:
+   * Any manifest or network change proposed by an AI agent must pass `cue vet ./schema/` before `lab-diff` / `lab-apply` can render downstream configs, while `lab-boot-sync` and 3-phase key rotation guarantee human administrators are never locked out.

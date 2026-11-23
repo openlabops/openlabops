@@ -5,9 +5,9 @@ title: OpenLabOps Wiki
 sidebar_position: 1
 ---
 
-# OpenLabOps: Zero-Dependency Declarative Homelab Operations Engine
+# OpenLabOps: Zero-Dependency Declarative Homelab Operations Framework
 
-**OpenLabOps** is an open-source, turnkey operations control hub and GitOps management engine for modern homelabs and private Linux fleets. Built with **100% Python 3 standard library** and stateless Ansible playbooks, it delivers Day-0 cluster onboarding, three-phase zero-downtime SSH key rotation, live sensory hardware discovery, and declarative GitOps synchronization without external Python dependencies (`NO pip`, `NO requests`, `NO pyyaml`).
+**OpenLabOps** is an open-source, turnkey operations control hub and GitOps management framework for modern homelabs and private Linux fleets. Built with **100% Python 3 standard library** and stateless Ansible playbooks, it delivers Day-0 cluster onboarding, three-phase zero-downtime SSH key rotation, live sensory hardware discovery, and declarative GitOps synchronization without external Python dependencies (`NO pip`, `NO requests`, `NO pyyaml`).
 
 ## Quickstart
 

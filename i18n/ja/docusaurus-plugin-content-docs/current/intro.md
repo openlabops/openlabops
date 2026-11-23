@@ -5,9 +5,9 @@ title: OpenLabOps Wiki
 sidebar_position: 1
 ---
 
-# OpenLabOps：ゼロ依存・宣言的 Homelab 運用エンジン
+# OpenLabOps：ゼロ依存・宣言的 Homelab 運用フレームワーク
 
-**OpenLabOps** は、現代の Homelab およびプライベート Linux サーバー群向けに設計されたオープンソースの GitOps 運用コントロールハブです。**100% Python 3 標準ライブラリ**とステートレスな Ansible プレイブックのみで構築されており、サードパーティ製 Python パッケージ（`NO pip`、`NO requests`、`NO pyyaml`）を一切使わずに、Day-0 インタラクティブ導入、3段階ゼロダウンタイム SSH 鍵ローテーション、リアルタイムハードウェア検出、宣言的 GitOps 同期を提供します。
+**OpenLabOps** は、現代の Homelab およびプライベート Linux サーバー群向けに設計されたオープンソースの GitOps 運用フレームワークです。**100% Python 3 標準ライブラリ**とステートレスな Ansible プレイブックのみで構築されており、サードパーティ製 Python パッケージ（`NO pip`、`NO requests`、`NO pyyaml`）を一切使わずに、Day-0 インタラクティブ導入、3段階ゼロダウンタイム SSH 鍵ローテーション、リアルタイムハードウェア検出、宣言的 GitOps 同期を提供します。
 
 ## クイックスタート (Quickstart)
 
