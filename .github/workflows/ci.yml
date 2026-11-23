@@ -49,7 +49,7 @@ jobs:
           ANSIBLE_CONFIG: ansible/ansible.cfg
         run: |
           python3 -m pip install --upgrade pip ansible-core
-          ansible-galaxy collection install ansible.posix
+          ansible-galaxy collection install ansible.posix community.general community.docker
           for pb in ansible/playbooks/*.yml; do
             ansible-playbook -i "localhost," --syntax-check "$pb"
           done
