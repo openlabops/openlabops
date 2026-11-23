@@ -53,6 +53,34 @@ CONF_DIR = OPS_DIR / "conf"
 CONF_NODES_DIR = CONF_DIR / "nodes"
 INVENTORY_DIR = OPS_DIR / "ansible" / "inventory"
 
+
+def _get_work_dir() -> Optional[Path]:
+    val = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("KIWI_INIT_WORK_DIR")
+    return Path(val) if val else None
+
+
+def _get_nodes_dir() -> Path:
+    wd = _get_work_dir()
+    return (wd / "conf" / "nodes") if wd else CONF_NODES_DIR
+
+
+def _get_inventory_dir() -> Path:
+    wd = _get_work_dir()
+    return (wd / "ansible" / "inventory") if wd else INVENTORY_DIR
+
+
+def _get_tools_config_path() -> Path:
+    wd = _get_work_dir()
+    if not wd:
+        return OPS_DIR / "tools" / "conf" / "tools.config.json"
+    work_cfg = wd / "tools" / "conf" / "tools.config.json"
+    if not work_cfg.exists():
+        src_cfg = OPS_DIR / "tools" / "conf" / "tools.config.json"
+        if src_cfg.exists():
+            work_cfg.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src_cfg, work_cfg)
+    return work_cfg
+
 # Internationalization (i18n)
 from engine.i18n import (
     t,
@@ -434,8 +462,8 @@ def provision_gitea_ci_bot(base_url, auth_str, gitea_user, gitea_password, org_n
             except Exception:
                 pass
 
-        # D. 動態更新 tools/conf/tools.config.json 內部 URL、組織與聯邦倉庫
-        tools_cfg = OPS_DIR / "tools" / "conf" / "tools.config.json"
+        # D. 動態更新 tools.config.json 內部 URL、組織與聯邦倉庫 (寫入 /tmp 工作區，不污染 repo)
+        tools_cfg = _get_tools_config_path()
         if tools_cfg.exists():
             try:
                 cfg_data = json.loads(tools_cfg.read_text(encoding="utf-8"))
@@ -762,7 +790,10 @@ def push_fresh_configs_and_secrets_to_gitea(cluster_config, org_name, repo_prefi
 
     compiled_tmp_obj = tempfile.TemporaryDirectory()
     compiled_base = Path(compiled_tmp_obj.name)
-    manifest_cand = OPS_DIR / "conf" / f"{repo_prefix}.manifest.yml"
+    wd = _get_work_dir()
+    manifest_cand = (wd / "conf" / f"{repo_prefix}.manifest.yml") if wd else (OPS_DIR / "conf" / f"{repo_prefix}.manifest.yml")
+    if not manifest_cand.exists():
+        manifest_cand = OPS_DIR / "conf" / f"{repo_prefix}.manifest.yml"
     if not manifest_cand.exists():
         manifest_cand = OPS_DIR / "conf" / "openlab.manifest.yml"
     if manifest_cand.exists() and (OPS_DIR / "engine" / "compiler.py").exists():
@@ -810,18 +841,23 @@ def push_fresh_configs_and_secrets_to_gitea(cluster_config, org_name, repo_prefi
                 # 2. 注入探測產生的全新 node-information
                 node_info_dir = tmp_path / "node-information"
                 node_info_dir.mkdir(parents=True, exist_ok=True)
-                if CONF_NODES_DIR.exists():
-                    for nf in sorted(CONF_NODES_DIR.glob("*.json")):
+                nodes_dir = _get_nodes_dir()
+                if nodes_dir.exists():
+                    for nf in sorted(nodes_dir.glob("*.json")):
                         if nf.name in ("current.json", "archive") or nf.name.startswith("."):
                             continue
                         hname = nf.stem[5:] if nf.stem.startswith("node_") else nf.stem
                         shutil.copy2(nf, node_info_dir / f"node_{hname}.json")
 
-                # 3. 注入 conf 與 schema
+                # 3. 注入 conf 與 schema (若有 /tmp 工作區產出之站點 manifest，一併覆蓋注入)
+                conf_dest = tmp_path / "conf"
+                conf_dest.mkdir(parents=True, exist_ok=True)
                 if (OPS_DIR / "conf").exists():
-                    conf_dest = tmp_path / "conf"
-                    conf_dest.mkdir(parents=True, exist_ok=True)
                     for f in (OPS_DIR / "conf").iterdir():
+                        if f.is_file() and f.suffix in (".yml", ".yaml", ".json"):
+                            shutil.copy2(f, conf_dest / f.name)
+                if wd and (wd / "conf").exists():
+                    for f in (wd / "conf").iterdir():
                         if f.is_file() and f.suffix in (".yml", ".yaml", ".json"):
                             shutil.copy2(f, conf_dest / f.name)
 
@@ -931,7 +967,9 @@ def deploy_ops_tools_and_configs(cluster_config, repo_prefix="openlab", target_h
             "-e", f"target_locale={target_loc}"
         ]
     else:
-        inv_file = OPS_DIR / "ansible" / "inventory" / "hosts.yml"
+        inv_file = _get_inventory_dir() / "hosts.yml"
+        if not inv_file.exists():
+            inv_file = OPS_DIR / "ansible" / "inventory" / "hosts.yml"
         if not inv_file.exists():
             inv_file = OPS_DIR.parent / f"{repo_prefix}-ansible" / "inventory" / "hosts.yml"
         cmd = [
@@ -947,8 +985,8 @@ def deploy_ops_tools_and_configs(cluster_config, repo_prefix="openlab", target_h
             cmd.extend(["-u", ansible_u, "--private-key", str(priv_key)])
     res = subprocess.run(cmd, capture_output=True, text=True)
 
-    # 固化本機 tools.config.json 與全域環境變數語系設定 (Persistent Locale State)
-    tools_cfg_file = OPS_DIR / "tools" / "conf" / "tools.config.json"
+    # 固化本機 tools.config.json 與全域環境變數語系設定 (寫入 /tmp 工作區，不污染 repo)
+    tools_cfg_file = _get_tools_config_path()
     if tools_cfg_file.exists():
         try:
             cfg_data = json.loads(tools_cfg_file.read_text(encoding="utf-8"))
@@ -1502,7 +1540,13 @@ def export_site_manifest(cluster_config, output_path=None):
     Serializes interactive session parameters into a declarative site YAML manifest.
     """
     repo_prefix = cluster_config.get("repo_prefix", "openlab")
-    out_file = Path(output_path) if output_path else (OPS_DIR / "conf" / f"{repo_prefix}.manifest.yml")
+    wd = _get_work_dir()
+    if output_path:
+        out_file = Path(output_path)
+    elif wd:
+        out_file = wd / "conf" / f"{repo_prefix}.manifest.yml"
+    else:
+        out_file = OPS_DIR / "conf" / f"{repo_prefix}.manifest.yml"
 
     cur_lang = cluster_config.get("lang", "en_US" if "openlab" in OPS_DIR.name.lower() else "zh_TW")
     cur_loc = cluster_config.get("locale", f"{cur_lang}.UTF-8")
@@ -1822,7 +1866,7 @@ def run_subnet_discovery_and_classification():
 
     # 提取所有探測到的真實子網路
     discovered_subnets = []
-    nodes_files = list(CONF_NODES_DIR.glob("*.json"))
+    nodes_files = list(_get_nodes_dir().glob("*.json"))
     for nf in nodes_files:
         if nf.name == "current.json":
             continue
@@ -1893,7 +1937,9 @@ def run_key_rotation_handover(targets, ephemeral_key_path, ephemeral_pubkey, all
     # 1. 優先透過官方 Ansible 劇本 (rotate-ansible-keys.yml) 執行正式三階段輪換
     ansible_bin = shutil.which("ansible-playbook")
     playbook_file = OPS_DIR / "ansible" / "playbooks" / "rotate-ansible-keys.yml"
-    inventory_file = OPS_DIR / "ansible" / "inventory" / "hosts.yml"
+    inventory_file = _get_inventory_dir() / "hosts.yml"
+    if not inventory_file.exists():
+        inventory_file = OPS_DIR / "ansible" / "inventory" / "hosts.yml"
 
     playbook_servers_rotated = False
     if ansible_bin and playbook_file.exists() and inventory_file.exists():
@@ -2236,6 +2282,12 @@ def main():
     parser.add_argument("--include-endpoints", action="store_true", help="Include endpoints (workstations) in Day-0 server onboarding")
     args = parser.parse_args()
 
+    import atexit
+    init_work_dir = Path(tempfile.mkdtemp(prefix="lab_init_work_"))
+    os.environ["LAB_INIT_WORK_DIR"] = str(init_work_dir)
+    os.environ["KIWI_INIT_WORK_DIR"] = str(init_work_dir)
+    atexit.register(shutil.rmtree, init_work_dir, ignore_errors=True)
+
     ui_banner()
     TOTAL_STEPS = 6
 
@@ -2518,18 +2570,18 @@ def main():
             ansible_user=cluster_config["ansible_user"]
         )
 
-    # 5.1 編譯渲染下游 5 大聯邦倉庫代碼 (compiler.py)
+    # 5.1 暫存匯出站點宣告並編譯渲染下游聯邦倉庫代碼至 /tmp (不污染孵化器 repo)
+    manifest_tmp_out = export_site_manifest(cluster_config)
+    compiled_work_dir = init_work_dir / "compiled"
     print(f"\n  • Compiling Downstream Repositories ({cluster_config['repo_prefix']}-*)...")
     comp_cmd = [
         sys.executable, str(ENGINE_DIR / "compiler.py"),
         "--dest-prefix", f"{cluster_config['repo_prefix']}-",
-        "--ops-internal",
+        "--base-dir", str(compiled_work_dir),
+        "--create-dest-dirs",
+        "--manifest", str(args.manifest or manifest_tmp_out),
         "--apply"
     ]
-    if (OPS_DIR.parent / f"{cluster_config['repo_prefix']}-ansible").exists():
-        comp_cmd.append("--full-federation")
-    if args.manifest:
-        comp_cmd.extend(["--manifest", str(args.manifest)])
     c_res = subprocess.run(comp_cmd, capture_output=True, text=True)
     if c_res.returncode == 0:
         print(f"    {C_GREEN}[✓] Downstream Federation Repositories compiled successfully.{C_RESET}")
@@ -2561,7 +2613,9 @@ def main():
 
     # 5.4 宣告式本機組態初始化 (/usr/local/etc/{cluster}/conf/backup.yml)
     local_cfg = Path(f"/usr/local/etc/{cluster_config['repo_prefix']}/conf/backup.yml")
-    rendered_cfg = OPS_DIR / "conf" / "backup_profiles.yml"
+    rendered_cfg = compiled_work_dir / f"{cluster_config['repo_prefix']}-configs" / "conf" / "backup_profiles.yml"
+    if not rendered_cfg.exists():
+        rendered_cfg = OPS_DIR / "conf" / "backup_profiles.yml"
     if not rendered_cfg.exists():
         rendered_cfg = OPS_DIR.parent / f"{cluster_config['repo_prefix']}-configs" / "conf" / "backup_profiles.yml"
     if rendered_cfg.exists() and (os.access("/usr/local/etc", os.W_OK) or os.getuid() == 0):
@@ -2587,9 +2641,7 @@ def main():
         else:
             print(f"  {C_YELLOW}[!] Note: {detail}. Ensure Gitea service is accessible.{C_RESET}")
 
-    # 5.5 Archinstall-Style 自動匯出站點宣告清單 (Export Site Manifest on Complete)
-    print(f"\n  • Exporting Site Manifest (Archinstall-Style Persistent Declaration)...")
-    export_site_manifest(cluster_config)
+    # 5.5 Archinstall-Style 暫存站點宣告清單已於 5.1 匯出至 /tmp 工作區並推送至 Gitea configs repo
 
     # 步驟 6: Ready 儀表板退出
     step_header(6, TOTAL_STEPS, "Ready Dashboard & Operational Handover")

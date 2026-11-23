@@ -23,14 +23,20 @@ from pathlib import Path
 
 OPS_DIR = Path(__file__).resolve().parent.parent
 BASE_DIR = OPS_DIR.parent
-CONF_NODES_DIR = OPS_DIR / "conf" / "nodes"
-CURRENT_SNAPSHOT_FILE = CONF_NODES_DIR / "current.json"
-
 INSTALLED_TOOLS_CONF_DIR = Path("/usr/local/bin/openlab/conf")
-if (OPS_DIR.parent / "openlab-ansible").exists():
-    DEFAULT_HOSTS_OUT = OPS_DIR.parent / "openlab-ansible" / "inventory" / "hosts.yml"
+_INIT_WORK_DIR = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("KIWI_INIT_WORK_DIR")
+if _INIT_WORK_DIR:
+    _INIT_WORK_PATH = Path(_INIT_WORK_DIR)
+    CONF_NODES_DIR = _INIT_WORK_PATH / "conf" / "nodes"
+    CURRENT_SNAPSHOT_FILE = CONF_NODES_DIR / "current.json"
+    DEFAULT_HOSTS_OUT = _INIT_WORK_PATH / "ansible" / "inventory" / "hosts.yml"
 else:
-    DEFAULT_HOSTS_OUT = OPS_DIR / "ansible" / "inventory" / "hosts.yml"
+    CONF_NODES_DIR = OPS_DIR / "conf" / "nodes"
+    CURRENT_SNAPSHOT_FILE = CONF_NODES_DIR / "current.json"
+    if (OPS_DIR.parent / "openlab-ansible").exists():
+        DEFAULT_HOSTS_OUT = OPS_DIR.parent / "openlab-ansible" / "inventory" / "hosts.yml"
+    else:
+        DEFAULT_HOSTS_OUT = OPS_DIR / "ansible" / "inventory" / "hosts.yml"
 
 
 # 預定義已知網段別名 (嚴格對齊 schema/network.cue 與 manifest)
@@ -554,13 +560,14 @@ def main():
         DEFAULT_HOSTS_OUT.parent.mkdir(parents=True, exist_ok=True)
         DEFAULT_HOSTS_OUT.write_text(rendered_hosts, encoding="utf-8")
         print(f"[✓] Written pre-classified inventory: {DEFAULT_HOSTS_OUT}")
-        # 同步至 ansible / inventory / hosts.yml
-        ans_mirror = OPS_DIR / "ansible" / "inventory" / "hosts.yml"
-        ans_mirror.parent.mkdir(parents=True, exist_ok=True)
-        ans_mirror.write_text(rendered_hosts, encoding="utf-8")
+        # 同步至 ansible / inventory / hosts.yml (僅非 Day-0 暫存模式才寫入 repo)
+        if not _INIT_WORK_DIR:
+            ans_mirror = OPS_DIR / "ansible" / "inventory" / "hosts.yml"
+            ans_mirror.parent.mkdir(parents=True, exist_ok=True)
+            ans_mirror.write_text(rendered_hosts, encoding="utf-8")
 
         # 發布至工具鏈端
-        tools_conf = OPS_DIR / "tools" / "conf" / "current.json"
+        tools_conf = (Path(_INIT_WORK_DIR) / "tools" / "conf" / "current.json") if _INIT_WORK_DIR else (OPS_DIR / "tools" / "conf" / "current.json")
         try:
             tools_conf.parent.mkdir(parents=True, exist_ok=True)
             tools_conf.write_text(snapshot_json, encoding="utf-8")

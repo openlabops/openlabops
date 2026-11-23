@@ -61,13 +61,32 @@ sequenceDiagram
     C->>N: Remove deprecated public key from authorized_keys
 ```
 
+### Boot-Time Stale Key Auto-Sync & Lockout Guard (`lab-boot-sync`)
+
+Offline or intermittent nodes (workstations, laptops) that missed a key rotation automatically catch up on boot without downloading private keys over HTTP:
+
+```mermaid
+sequenceDiagram
+    participant N as Intermittent Node
+    participant G as Gitea (openlab-secrets & Actions)
+    N->>G: Compare /etc/openlab/last_synced_commit vs secrets HEAD SHA
+    alt SHA Matches (Fast Path)
+        N->>N: Write /run/openlab/synced_ok (Unlock)
+    else SHA Stale (Node Missed Rotation)
+        N->>G: Dispatch deploy-ssh-keys.yml (source_commit_sha, deploy_client_keys=false)
+        G->>N: Auth with historical key, push latest pubkey, purge old key
+        N->>N: Update last_synced_commit & write /run/openlab/synced_ok
+    end
+```
+
 ---
 
 ## 🚀 Key Features
 
 * **Zero External Python Dependencies**: Runs entirely on the Python 3 standard library.
-* **Day-0 Turnkey Onboarding (`lab-init`)**: Interactive TUI wizard guides initial fleet ingestion and generates permanent management keys.
+* **Day-0 Turnkey Onboarding (`lab-init`)**: Interactive TUI wizard guides initial fleet ingestion in an isolated `/tmp` workspace and generates permanent management keys.
 * **Three-Phase Zero-Downtime Key Rotation**: Seamless key lifecycle management (Stage 1: Add $\rightarrow$ Stage 2: Verify $\rightarrow$ Stage 3: Remove).
+* **Boot-Time Stale Key Auto-Sync (`lab-boot-sync`)**: Intermittent nodes compare `/etc/<prefix>/last_synced_commit` against `openlab-secrets` HEAD SHA and trigger a roll-forward sync using `source_commit_sha` while protected by a lockout guard (`/run/<prefix>/synced_ok`).
 * **Flat LAN Architecture**: Pre-configured for standard single-subnet local area networks (`192.168.1.0/24`).
 * **Multi-Distribution Linux Support**: Native support for Arch Linux, Debian, Ubuntu, Alpine, Photon OS, and generic systemd-based Linux systems.
 * **Dynamic Ground-Truth Telemetry**: Machine hardware and service facts probed live via native shell scripts and compiled directly into Ansible inventories.

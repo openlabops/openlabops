@@ -40,6 +40,16 @@ OPS_DIR = Path(__file__).resolve().parent.parent
 if str(OPS_DIR) not in sys.path:
     sys.path.insert(0, str(OPS_DIR))
 CONF_NODES_DIR = OPS_DIR / "conf" / "nodes"
+
+
+def _get_nodes_dir() -> Path:
+    env_dir = os.environ.get("LAB_NODES_DIR") or os.environ.get("KIWI_NODES_DIR")
+    if env_dir:
+        return Path(env_dir)
+    work_dir = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("KIWI_INIT_WORK_DIR")
+    if work_dir:
+        return Path(work_dir) / "conf" / "nodes"
+    return CONF_NODES_DIR
 PROBE_SCRIPT = OPS_DIR / "engine" / "bootstrap_probe.sh"
 CLASSIFIER_PY = OPS_DIR / "engine" / "classifier.py"
 
@@ -584,8 +594,9 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
         node_facts = clean_facts
 
         if not callback:
-            CONF_NODES_DIR.mkdir(parents=True, exist_ok=True)
-            out_file = CONF_NODES_DIR / f"{hname}.json"
+            nodes_dir = _get_nodes_dir()
+            nodes_dir.mkdir(parents=True, exist_ok=True)
+            out_file = nodes_dir / f"{hname}.json"
             out_file.write_text(json.dumps(clean_facts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
             emit(f"{C_CYAN}[4/4] Saved inventory classification facts: {out_file}{C_RESET}")
 
@@ -877,10 +888,11 @@ def decommission_node(target, target_user=None, purge=False, no_revoke=False, ca
     target_hname = str(target)
     target_data = {}
 
-    if (CONF_NODES_DIR / f"{target}.json").exists():
-        target_file = CONF_NODES_DIR / f"{target}.json"
+    nodes_dir = _get_nodes_dir()
+    if (nodes_dir / f"{target}.json").exists():
+        target_file = nodes_dir / f"{target}.json"
     else:
-        for p in CONF_NODES_DIR.glob("*.json"):
+        for p in nodes_dir.glob("*.json"):
             if p.name == "current.json":
                 continue
             try:
@@ -894,7 +906,7 @@ def decommission_node(target, target_user=None, purge=False, no_revoke=False, ca
                 continue
 
     if not target_file:
-        emit(f"[✗] Error: Node '{target}' facts not found in {CONF_NODES_DIR}.")
+        emit(f"[✗] Error: Node '{target}' facts not found in {nodes_dir}.")
         return False
 
     if not target_data and target_file.exists():
@@ -936,7 +948,7 @@ def decommission_node(target, target_user=None, purge=False, no_revoke=False, ca
                     shutil.rmtree(backup_root, ignore_errors=True)
                     emit(f"  [✓] Purged backup vault directory: {backup_root}")
     else:
-        archive_dir = CONF_NODES_DIR / "archive"
+        archive_dir = _get_nodes_dir() / "archive"
         archive_dir.mkdir(parents=True, exist_ok=True)
         archive_file = archive_dir / f"{target_hname}_{int(time.time())}.json"
         target_file.rename(archive_file)
@@ -1153,8 +1165,9 @@ def run_lab_node_tui(dialog=None):
                         f"是否確認將此節點寫入集群事實庫 (conf/nodes/{hname}.json)？"
                     )
                     if dialog.yesno("Confirm Inventory Addition", summary_msg, width=74, height=18):
-                        CONF_NODES_DIR.mkdir(parents=True, exist_ok=True)
-                        out_file = CONF_NODES_DIR / f"{hname}.json"
+                        nodes_dir = _get_nodes_dir()
+                        nodes_dir.mkdir(parents=True, exist_ok=True)
+                        out_file = nodes_dir / f"{hname}.json"
                         out_file.write_text(json.dumps(facts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
 
                         if dialog.yesno("Re-compile Inventory", "是否立即重新編譯 Ansible inventory/hosts.yml？"):
@@ -1178,7 +1191,7 @@ def run_lab_node_tui(dialog=None):
 
         elif choice == "remove":
             existing_nodes = []
-            for p in sorted(CONF_NODES_DIR.glob("*.json")):
+            for p in sorted(_get_nodes_dir().glob("*.json")):
                 if p.name in ("current.json",):
                     continue
                 try:
@@ -1229,7 +1242,7 @@ def run_lab_node_tui(dialog=None):
             lines = [f"{'主機名稱':<12} {'主要 IP':<16} {'分類角色':<12} {'系統發行版'}"]
             lines.append("-" * 64)
             nodes_count = 0
-            for p in sorted(CONF_NODES_DIR.glob("*.json")):
+            for p in sorted(_get_nodes_dir().glob("*.json")):
                 if p.name in ("current.json",):
                     continue
                 try:
