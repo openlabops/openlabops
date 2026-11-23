@@ -39,4 +39,4 @@ lab-tools
 * **[セキュリティポリシーと鍵ライフサイクル](./security)** — 標準鍵ロール、3段階ゼロダウンタイムローテーション、`from="..."` IP 制限、`lab-boot-sync` ロックアウト防止。
 * **[テスト手法とサンドボックス原理](./testing)** — 本番ツール検証原則、Dagger DinD、マルチディストリビューション Docker サンドボックス、PTY シミュレーター、SHA-256 DR 訓練。
 * **[Antigravity Vibe Coding と AI SRE](./methodology)** — 仕様優先の人機協調開発フローと、既存境界を活かした `AGY-Remote` の安全な SRE 運用。
-* **[CLI アプリと内部実装](./apps/onboarding-and-compiler)** — すべての `lab-*` コマンドおよび補助スクリプトの詳細な使い方と内部仕様。
+* **[CLI アプリと内部実装](./apps/lab-init)** — すべての `lab-*` コマンドおよび補助スクリプトの詳細な使い方と内部仕様。

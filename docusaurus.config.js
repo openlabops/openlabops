@@ -94,9 +94,10 @@ const config = {
           {
             title: 'CLI Reference',
             items: [
-              { label: 'Onboarding & Provisioning', to: '/apps/onboarding-and-compiler' },
-              { label: 'Fleet & SSH Lifecycle', to: '/apps/fleet-and-ssh' },
-              { label: 'Config, Backup & Helpers', to: '/apps/ops-and-helpers' },
+              { label: 'Day-0 Initialization (lab-init)', to: '/apps/lab-init' },
+              { label: 'Node Onboarding & Discovery', to: '/apps/lab-node' },
+              { label: 'Health & SSH Lifecycle', to: '/apps/lab-status-and-ssh' },
+              { label: 'Fleet Setup & Helpers', to: '/apps/lab-fleet-ops' },
             ],
           },
           {

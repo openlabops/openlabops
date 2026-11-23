@@ -39,4 +39,4 @@ lab-tools
 * **[安全政策與金鑰生命週期](./security)** — 語意金鑰角色、三階段零停機輪替、`from="..."` 來源限制與 `lab-boot-sync` 鎖定防護。
 * **[測試方法與沙箱原理](./testing)** — 正式工具驗證原則、Dagger DinD、多發行版 Docker 沙箱、PTY 模擬器與 SHA-256 災難演練。
 * **[Antigravity Vibe Coding 與 AI SRE 協作](./methodology)** — 規格先行的人機協作開發流程，以及如何利用現有安全邊界讓 `AGY-Remote` 參與 SRE 維運。
-* **[CLI 應用程式與內部原理](./apps/onboarding-and-compiler)** — 所有 `lab-*` 指令與輔助腳本的完整參數與底層運作機制。
+* **[CLI 應用程式與內部原理](./apps/lab-init)** — 所有 `lab-*` 指令與輔助腳本的完整參數與底層運作機制。

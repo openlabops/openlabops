@@ -61,8 +61,8 @@ openlabops/
    * Stored in `conf/core.manifest.yml` and `schema/*.cue`.
    * Defines the 4-repository federation topology, canonical key roles (`ansible`, `user`, `git`), security baselines, and CUE validation rules.
 2. **Tier 2 (`site`): Site-Specific Declarative Intent**
-   * Stored in `conf/openlab.manifest.yml`.
-   * Captures cluster name, domain, Flat LAN subnet (`192.168.1.0/24`), gateway, admin/ansible usernames, and Gitea endpoint. Generated interactively by `lab-init` (inspired by `archinstall`) and exported for reproducible unattended runs via `--manifest`.
+   * Defined by `conf/openlab.manifest.yml` (or passed via `--manifest`).
+   * Captures cluster name, domain, Flat LAN subnet (`192.168.1.0/24`), gateway, admin/ansible usernames, and Gitea endpoint. Generated interactively by `lab-init` inside an isolated `/tmp/lab_init_work_*` workspace (`LAB_INIT_WORK_DIR`), compiled cleanly, and pushed to `openlab-configs` without mutating the incubator repository.
 3. **Tier 3 (`node`): Dynamic Machine Telemetry Facts**
    * **Inventory Classification (`conf/nodes/*.json`)**: Stores only classification attributes (`os_family`, `distribution`, `role`, `capabilities`). Never stores hardware telemetry (`mac_address`, `cpu_cores`, `memory_mb`).
    * **CMDB Hardware Telemetry (`node-information/node_<hostname>.json`)**: Probed independently by `lab-discover` (`engine/bootstrap_probe.sh`), recording RAM, CPU, disks, Docker containers, listening ports, and `authorized_keys` fingerprints.

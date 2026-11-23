@@ -39,4 +39,4 @@ lab-tools
 * **[Security Policy & Key Lifecycle](./security)** — Canonical key roles, 3-phase zero-downtime rotation, IP-restricted `authorized_keys`, and `lab-boot-sync` lockout guard.
 * **[Testing Methodology & Sandbox](./testing)** — Production-tool verification, Dagger DinD, multi-distro Docker sandbox, PTY simulator, and SHA-256 DR drills.
 * **[Antigravity Vibe Coding & AI SRE](./methodology)** — Spec-First human-AI collaboration workflow and how `AGY-Remote` safely participates in SRE within hard architectural boundaries.
-* **[CLI Applications & Internals](./apps/onboarding-and-compiler)** — Detailed usage, flags, and internal mechanics for every `lab-*` command and helper script.
+* **[CLI Applications & Internals](./apps/lab-init)** — Detailed usage, flags, and internal mechanics for every `lab-*` command and helper script.
