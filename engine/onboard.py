@@ -468,8 +468,8 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
         if user == "root":
             remote_cmd = f"stty -echo 2>/dev/null || true; echo '===OPENLAB_PIPE_READY==='; {env_vars} sh"
         else:
-            # 非 root 預設使用者：透過 sudo 提權執行探針，並關閉遠端 PTY echo 避免腳本回顯污染輸出
-            remote_cmd = f"sudo -p '[sudo] password for %u: ' sh -c 'stty -echo 2>/dev/null || true; echo \"===OPENLAB_PIPE_READY===\"; exec env {env_vars} sh'"
+            # 非 root 預設使用者：env 置於 sh -c '...' 外部避免 shlex 單引號衝突，並於 sh 內關閉遠端 PTY echo
+            remote_cmd = f"sudo -p '[sudo] password for %u: ' env {env_vars} sh -c 'stty -echo 2>/dev/null || true; echo \"===OPENLAB_PIPE_READY===\"; exec sh'"
 
         if not prompt_callback and interactive and not callback and sys.stdin.isatty():
             def _cli_prompt(p_msg: str, secret: bool = True) -> Optional[str]:
@@ -505,7 +505,7 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
         if not err_reason:
             if "permission denied" in output.lower():
                 err_reason = "SSH 連線失敗：認證被拒絕 (Permission denied)"
-            elif "password for" in output.lower():
+            elif "===OPENLAB_PIPE_READY===" not in output and "password for" in output.lower():
                 err_reason = f"Sudo 提權失敗：需要密碼 ([sudo] password for {user})"
             elif "enter passphrase for key" in output.lower():
                 err_reason = "SSH 私鑰錯誤：需要 Passphrase 密碼"
