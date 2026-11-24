@@ -1318,15 +1318,41 @@ def run_lab_node_tui(dialog=None):
             dialog.msgbox("Managed Nodes Ground Truth", "\n".join(lines), width=84, height=22)
 
         elif choice == "classify":
+            clf_err = [""]
             def _do_clf(log_fn):
+                if not CLASSIFIER_PY.exists():
+                    msg = f"[✗] 缺乏本地編譯引擎：{CLASSIFIER_PY} 不存在"
+                    clf_err[0] = msg
+                    log_fn(msg)
+                    return False
+                local_nodes = [p for p in _get_nodes_dir().glob("*.json") if p.name != "current.json"]
+                if not local_nodes:
+                    log_fn("[!] 缺乏本機節點資料 (conf/nodes/ 目前無節點 JSON)")
                 log_fn("Executing classifier.py --apply...")
-                r = subprocess.run([sys.executable, str(CLASSIFIER_PY), "--apply"], capture_output=True, text=True)
+                try:
+                    r = subprocess.run([sys.executable, str(CLASSIFIER_PY), "--apply"], capture_output=True, text=True)
+                except Exception as e:
+                    clf_err[0] = str(e)
+                    log_fn(f"[✗] 執行失敗: {e}")
+                    return False
                 for line in r.stdout.splitlines():
                     if line.strip():
                         log_fn(line.strip())
-                return r.returncode == 0
-            dialog.progress_box("Compiling Inventory", "classifier.py", _do_clf, width=76, height=20)
-            dialog.msgbox("Inventory Compiled", "Ansible inventory/hosts.yml 與 current.json 已成功編譯完成！")
+                for line in r.stderr.splitlines():
+                    if line.strip():
+                        log_fn(f"[ERR] {line.strip()}")
+                if r.returncode != 0:
+                    clf_err[0] = r.stderr.strip() or f"Exit code {r.returncode}"
+                    return False
+                if not local_nodes:
+                    clf_err[0] = "缺乏本機節點資料 (conf/nodes/ 無節點 JSON)，僅產出空白基準。"
+                    return False
+                return True
+            ok_clf = dialog.progress_box("Compiling Inventory", "classifier.py", _do_clf, width=76, height=20)
+            if ok_clf:
+                dialog.msgbox("Inventory Compiled", "Ansible inventory/hosts.yml 與 current.json 已成功編譯完成！")
+            else:
+                dialog.msgbox("Inventory Compile Notice", f"編譯未完成或缺乏本機資料：\n\n{clf_err[0]}")
 
 
 def main():
