@@ -4,9 +4,11 @@ OpenLabOps Core Library: Gitea Action Dispatcher (Python Version)
 """
 
 import os
+import sys
 import time
 import json
 import getpass
+from pathlib import Path
 import subprocess
 import urllib.request
 import urllib.error
@@ -624,7 +626,7 @@ def register_node_fact_via_runner(hostname: str, node_facts: dict = None, action
     b64_payload = ""
     if action != "remove" and isinstance(node_facts, dict):
         b64_payload = base64.b64encode(json.dumps(node_facts, ensure_ascii=False).encode("utf-8")).decode("ascii")
-    return gitea_dispatch(
+    ok = gitea_dispatch(
         "register-node-fact.yml",
         payload={
             "ref": "main",
@@ -636,5 +638,144 @@ def register_node_fact_via_runner(hostname: str, node_facts: dict = None, action
         },
         wait=wait,
     )
+    if ok:
+        invalidate_remote_node_cache()
+    return ok
+
+
+def _get_node_cache_paths() -> tuple:
+    """取得節點遠端事實快取路徑 (nodes_cache.json, nodes_cache_meta.json)"""
+    prefix = get_cluster_prefix()
+    cache_dir = Path.home() / ".cache" / prefix
+    return cache_dir / "nodes_cache.json", cache_dir / "nodes_cache_meta.json"
+
+
+def invalidate_remote_node_cache():
+    """清除節點快取標記，強制下次讀取時向遠端重新同步"""
+    _, meta_file = _get_node_cache_paths()
+    try:
+        if meta_file.exists():
+            meta_file.unlink()
+    except Exception:
+        pass
+
+
+def get_remote_federation_marker() -> tuple:
+    """
+    以極低延遲查詢遠端聯邦倉庫狀態標記 (branch commit SHA 或最新 workflow run_id)。
+    回傳 (marker_str, is_online)。
+    """
+    token = load_gitea_token()
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+
+    try:
+        req = urllib.request.Request(f"{GITEA_URL}/api/v1/version", headers=headers)
+        with urllib.request.urlopen(req, timeout=2) as resp:
+            if resp.status != 200:
+                return "", False
+    except Exception:
+        return "", False
+
+    parts = []
+    for repo_key in ("operations", "configs"):
+        rname = get_repo_name(repo_key)
+        if not rname:
+            continue
+        try:
+            url = f"{GITEA_URL}/api/v1/repos/{REPO_OWNER}/{rname}/branches/main"
+            req = urllib.request.Request(url, headers=headers)
+            with urllib.request.urlopen(req, timeout=2) as resp:
+                if resp.status == 200:
+                    bdata = json.loads(resp.read().decode("utf-8"))
+                    sha = bdata.get("commit", {}).get("id", "")
+                    if sha:
+                        parts.append(f"{repo_key}:{sha}")
+        except Exception:
+            pass
+
+    wf_repo = get_repo_name("workflows") or ACTION_REPO
+    if wf_repo:
+        try:
+            runs = get_action_runs(wf_repo, owner=REPO_OWNER, page=1, limit=1, silent=True).get("workflow_runs", [])
+            if runs:
+                parts.append(f"wf_run:{runs[0].get('id', '')}")
+        except Exception:
+            pass
+
+    return "|".join(parts), True
+
+
+def _write_node_cache(nodes: list, source_label: str, marker: str):
+    """寫入本機節點快取與 current.json 快照"""
+    cache_file, meta_file = _get_node_cache_paths()
+    try:
+        cache_file.parent.mkdir(parents=True, exist_ok=True)
+        cache_file.write_text(json.dumps(nodes, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        meta_file.write_text(
+            json.dumps({"marker": marker, "source": source_label, "updated_at": int(time.time())}, ensure_ascii=False) + "\n",
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+    # 同步寫入本地 current.json (若目錄存在且可寫)
+    from .config import TOOLS_ROOT
+    snap_candidates = [
+        TOOLS_ROOT.parent / "conf" / "nodes" / "current.json",
+        TOOLS_ROOT / "conf" / "current.json",
+    ]
+    json_str = json.dumps(nodes, indent=2, ensure_ascii=False) + "\n"
+    for snap in snap_candidates:
+        try:
+            if snap.parent.exists():
+                snap.write_text(json_str, encoding="utf-8")
+        except Exception:
+            pass
+
+
+def sync_remote_node_cache_if_needed(force: bool = False) -> tuple:
+    """
+    比對本機節點快取與遠端聯邦倉庫標記：
+    - 若標記一致且快取非空：直接回傳本機快取（免除重抓與 Runner 派發延遲）。
+    - 若標記不同、無快取或 force=True：自動向遠端抓取並更新快取。
+    回傳 (nodes_list, source_label, is_online)。
+    """
+    cache_file, meta_file = _get_node_cache_paths()
+    cached_nodes = []
+    cached_meta = {}
+    if cache_file.exists():
+        try:
+            data = json.loads(cache_file.read_text(encoding="utf-8"))
+            if isinstance(data, list):
+                cached_nodes = data
+        except Exception:
+            pass
+    if meta_file.exists():
+        try:
+            mdata = json.loads(meta_file.read_text(encoding="utf-8"))
+            if isinstance(mdata, dict):
+                cached_meta = mdata
+        except Exception:
+            pass
+
+    if "unittest" in sys.modules or os.getenv("LAB_OFFLINE") == "1":
+        return cached_nodes, cached_meta.get("source", "cache"), False
+
+    marker, is_online = get_remote_federation_marker()
+    if not is_online:
+        return cached_nodes, cached_meta.get("source", "offline-cache"), False
+
+    if not force and cached_nodes and marker and cached_meta.get("marker") == marker:
+        return cached_nodes, cached_meta.get("source", "cache"), True
+
+    nodes, source_label, ok_online = fetch_remote_node_facts()
+    if ok_online and nodes:
+        post_marker, _ = get_remote_federation_marker()
+        _write_node_cache(nodes, source_label, post_marker or marker)
+        return nodes, source_label, True
+
+    return cached_nodes, cached_meta.get("source", source_label), ok_online
 
 

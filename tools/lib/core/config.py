@@ -448,11 +448,10 @@ def get_cluster_targets() -> list:
             st["ssh_target"] = f"-i {k_path} {t_user}@{st.get('host', st.get('name', 'localhost'))}"
     static_by_name = {t["name"]: t for t in static_targets if "name" in t}
 
-    # 優先自目前專案 conf/nodes/*.json 即時動態載入目標清單 (100% Dynamic Facts SSOT)
+    # 優先自目前專案 conf/nodes/*.json 即時動態載入目標清單，若無則與遠端聯邦快取比對同步
     nodes_dir = TOOLS_ROOT.parent / "conf" / "nodes"
+    node_items = []
     if nodes_dir.exists():
-        dynamic_targets = []
-        node_items = []
         # 先讀各節點事實檔
         for nf in sorted(nodes_dir.glob("*.json")):
             if nf.name in ("current.json", "archive") or nf.name.startswith("."):
@@ -463,17 +462,30 @@ def get_cluster_targets() -> list:
                     node_items.append(data)
             except Exception:
                 pass
-        # 若無單獨節點事實檔，讀 current.json
-        if not node_items:
-            cur_snap = nodes_dir / "current.json"
-            if cur_snap.exists():
-                try:
-                    data = json.loads(cur_snap.read_text(encoding="utf-8"))
-                    if isinstance(data, list):
-                        node_items = data
-                except Exception:
-                    pass
 
+    # 若無單獨節點事實檔，比對遠端與本機快取 (一樣不重抓，不一樣自動同步)
+    if not node_items:
+        try:
+            from core.gitea_api import sync_remote_node_cache_if_needed
+            synced_nodes, _, _ = sync_remote_node_cache_if_needed()
+            if isinstance(synced_nodes, list) and synced_nodes:
+                node_items = synced_nodes
+        except Exception:
+            pass
+
+    # 備援：讀本機 current.json
+    if not node_items and nodes_dir.exists():
+        cur_snap = nodes_dir / "current.json"
+        if cur_snap.exists():
+            try:
+                data = json.loads(cur_snap.read_text(encoding="utf-8"))
+                if isinstance(data, list):
+                    node_items = data
+            except Exception:
+                pass
+
+    if node_items:
+        dynamic_targets = []
         for n in node_items:
             if not n.get("always_online", True):
                 continue

@@ -1100,6 +1100,7 @@ def run_lab_node_tui(dialog=None):
             ("onboard", "納管全新或救援目標節點 (Onboard / Rescue Node)"),
             ("list", "檢視目前已納管節點清冊 (List Managed Nodes Ground Truth)"),
             ("remove", "除役並移除指定節點 (Decommission Node & Revoke Key)"),
+            ("sync", "同步本機節點至遠端倉庫 (Sync Local Nodes to Repo)"),
             ("classify", "編譯主機清冊 (Re-compile Ansible Inventory)"),
             ("exit", "離開節點管理主控台 (Exit Controller)"),
         ]
@@ -1316,6 +1317,25 @@ def run_lab_node_tui(dialog=None):
                 src_info = f" | 來源: {source_label}" if source_label else ""
                 lines.insert(0, f"全網已納管節點: {len(nodes_map)} 台{src_info}\n")
             dialog.msgbox("Managed Nodes Ground Truth", "\n".join(lines), width=84, height=22)
+
+        elif choice == "sync":
+            sync_err = [""]
+            def _do_sync(log_fn):
+                try:
+                    from tools.lib.lab_node import sync_nodes_to_federation
+                    ok = sync_nodes_to_federation(dry_run=False, emit=log_fn)
+                    if not ok:
+                        sync_err[0] = "部分或全部節點同步失敗，請檢查上方日誌與 Gitea/Runner 連線狀態。"
+                    return ok
+                except Exception as e:
+                    sync_err[0] = str(e)
+                    log_fn(f"[✗] 同步異常: {e}")
+                    return False
+            ok_sync = dialog.progress_box("Syncing Nodes to Federation Repo", "lab-node sync", _do_sync, width=78, height=20)
+            if ok_sync:
+                dialog.msgbox("Sync Complete", "本機與遠端聯邦倉庫節點清冊已完成同步！")
+            else:
+                dialog.msgbox("Sync Notice", f"節點同步未完全成功：\n\n{sync_err[0]}")
 
         elif choice == "classify":
             clf_err = [""]

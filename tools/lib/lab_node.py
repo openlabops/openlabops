@@ -13,6 +13,8 @@ OpenLabOps Cluster Management Console (lab-node)
 import os
 import sys
 import json
+import re
+import socket
 import base64
 import shutil
 import argparse
@@ -27,7 +29,7 @@ if LIB_DIR not in sys.path:
 
 from core.ui_theme import ui_header, ui_kv, ui_divider, ui_info, ui_success, ui_warn, ui_error
 from core.ui_menu import ui_select, ui_confirm, ui_form, select_target_hosts
-from core.config import get_admin_user, get_ansible_user, is_openlab
+from core.config import get_admin_user, get_ansible_user, get_cluster_targets, get_manifest_path, is_openlab
 from core.version import get_local_version
 from core.i18n import t
 
@@ -110,11 +112,11 @@ def save_current_snapshot(nodes: list):
 
 
 def list_nodes():
-    """顯示已納管節點清冊 (嚴格自遠端 Gitea 聯邦倉庫即時讀取)"""
+    """顯示已納管節點清冊 (比對遠端與本機快取，一致則秒讀快取，不一致自動同步)"""
     ui_header(f"OpenLabOps 已納管節點清單 (lab-node list v{get_local_version()})")
-    from core.gitea_api import fetch_remote_node_facts
-    nodes, source_label, is_online = fetch_remote_node_facts()
-    if not is_online:
+    from core.gitea_api import sync_remote_node_cache_if_needed
+    nodes, source_label, is_online = sync_remote_node_cache_if_needed()
+    if not is_online and not nodes:
         ui_error("離線狀態：無法連線至 Gitea 聯邦倉庫取得節點事實。")
         return
     if not nodes:
@@ -146,6 +148,245 @@ def list_nodes():
     print("-" * 90)
     src_info = f" (來源: {source_label})" if source_label else ""
     ui_info(f"總計已納管節點: {len(nodes)} 台{src_info}")
+
+
+def _resolve_target_ip(hname: str, host_val: str, is_local: bool = False) -> str:
+    """嘗試解析節點之 IPv4 位址 (支援直連 IP、DNS/hosts、~/.ssh/config 與 manifest 查表)"""
+    ipv4_re = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}$")
+    for cand in (host_val, hname):
+        if cand and ipv4_re.match(cand):
+            return cand
+
+    if is_local or host_val in ("localhost", "127.0.0.1"):
+        try:
+            resolved = socket.gethostbyname(hname)
+            if ipv4_re.match(resolved) and not resolved.startswith("127."):
+                return resolved
+        except Exception:
+            pass
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                s.connect(("192.168.1.1", 80))
+                local_ip = s.getsockname()[0]
+                if ipv4_re.match(local_ip):
+                    return local_ip
+        except Exception:
+            pass
+        return "127.0.0.1"
+
+    for cand in (host_val, hname):
+        if not cand:
+            continue
+        try:
+            resolved = socket.gethostbyname(cand)
+            if ipv4_re.match(resolved):
+                return resolved
+        except Exception:
+            pass
+
+    # 嘗試從 ~/.ssh/config 查 HostName
+    ssh_cfg = Path.home() / ".ssh" / "config"
+    if ssh_cfg.exists():
+        try:
+            in_block = False
+            targets = {hname.lower(), (host_val or "").lower()} - {""}
+            for raw in ssh_cfg.read_text(encoding="utf-8", errors="ignore").splitlines():
+                line = raw.strip()
+                if not line or line.startswith("#"):
+                    continue
+                low = line.lower()
+                if low.startswith("host "):
+                    aliases = {a.lower() for a in line.split()[1:]}
+                    in_block = bool(aliases & targets)
+                elif in_block and low.startswith("hostname "):
+                    hn = line.split(None, 1)[1].strip()
+                    if ipv4_re.match(hn):
+                        return hn
+        except Exception:
+            pass
+
+    # 嘗試從 manifest 查表
+    manifest_path = get_manifest_path()
+    if manifest_path and manifest_path.exists():
+        try:
+            from core.yaml_parser import parse_yaml_file, extract_manifest_hosts_metadata
+            meta_map = extract_manifest_hosts_metadata(parse_yaml_file(manifest_path))
+            for k, m in meta_map.items():
+                if k.lower() == hname.lower() or k.split(".")[0].lower() == hname.lower():
+                    mip = str(m.get("ip", "")).strip()
+                    if ipv4_re.match(mip):
+                        return mip
+        except Exception:
+            pass
+
+    return ""
+
+
+def _build_node_fact_from_target(target: dict) -> dict | None:
+    """將 tools.config.json / manifest 靜態目標轉換為符合 schema/nodes.cue 的節點事實物件"""
+    hname = str(target.get("name", "")).strip()
+    if not hname:
+        return None
+    host_val = str(target.get("host", hname)).strip()
+    is_local = bool(target.get("is_local")) or host_val in ("localhost", "127.0.0.1") or hname == "control-node"
+    primary_ip = _resolve_target_ip(hname, host_val, is_local=is_local)
+    if not primary_ip:
+        return None
+
+    os_str = str(target.get("os", "Linux")).strip()
+    mgr = str(target.get("mgr", "")).strip().lower()
+    os_low = os_str.lower()
+
+    if is_local:
+        node_class = "standard"
+        node_category = "dev"
+        appliance_type = "none"
+        key_profile = "standard"
+        is_immutable = False
+        always_online = True
+    elif mgr == "vib" or target.get("is_kvm"):
+        node_class = "appliance"
+        node_category = "hypervisor"
+        appliance_type = "kvm"
+        key_profile = "standard"
+        is_immutable = True
+        always_online = True
+    elif mgr == "firmware" or target.get("is_storage"):
+        node_class = "appliance"
+        node_category = "storage"
+        appliance_type = "storage"
+        key_profile = "standard"
+        is_immutable = True
+        always_online = True
+    else:
+        node_class = "standard"
+        node_category = str(target.get("role", "server")).strip() or "server"
+        if node_category not in ("dev", "server", "desktop"):
+            node_category = "server"
+        appliance_type = "none"
+        key_profile = "standard"
+        is_immutable = False
+        always_online = (node_category != "desktop")
+
+    if "arch" in os_low:
+        os_family = "ArchLinux"
+    elif "photon" in os_low:
+        os_family = "PhotonOS"
+    elif "oracle" in os_low:
+        os_family = "OracleLinux"
+    elif "ubuntu" in os_low:
+        os_family = "Ubuntu"
+    elif "debian" in os_low:
+        os_family = "Debian"
+    elif "alpine" in os_low:
+        os_family = "Alpine"
+    elif appliance_type == "kvm":
+        os_family = "Virtualization"
+    else:
+        os_family = os_str.split()[0] if os_str else "Linux"
+
+    domain = "lab" if is_openlab() else "openlab.com"
+    fqdn = hname if "." in hname else f"{hname}.{domain}"
+    subnet_cidr = f"{primary_ip.rsplit('.', 1)[0]}.0/24"
+    return {
+        "hostname": hname,
+        "fqdn": fqdn,
+        "primary_ip": primary_ip,
+        "subnet_cidr": subnet_cidr,
+        "node_class": node_class,
+        "node_category": node_category,
+        "always_online": always_online,
+        "is_immutable": is_immutable,
+        "appliance_type": appliance_type,
+        "key_profile": key_profile,
+        "os_family": os_family,
+        "distribution": os_str or os_family,
+        "capabilities": {
+            "has_docker": False,
+            "has_python": appliance_type not in ("kvm", "storage"),
+        },
+    }
+
+
+def sync_nodes_to_federation(dry_run: bool = False, emit=None) -> bool:
+    """比對本機節點設定與遠端 Gitea 聯邦倉庫，將本機有但遠端缺少的節點自動推送註冊，並重新編譯快照"""
+    log = emit or print
+    from core.gitea_api import fetch_remote_node_facts, register_node_fact_via_runner
+
+    # 1. 收集本機節點資料 (優先 conf/nodes/*.json，並補齊 tools.config.json / manifest 目標)
+    local_by_key = {}
+    for n in get_current_snapshot():
+        h = str(n.get("hostname", "")).strip()
+        if h:
+            local_by_key[h.split(".")[0].lower()] = n
+
+    unresolved = []
+    for tgt in get_cluster_targets():
+        h = str(tgt.get("name", "")).strip()
+        if not h:
+            continue
+        short_k = h.split(".")[0].lower()
+        if short_k not in local_by_key:
+            built = _build_node_fact_from_target(tgt)
+            if built:
+                local_by_key[short_k] = built
+            else:
+                unresolved.append(h)
+
+    # 2. 取得遠端聯邦倉庫事實
+    remote_nodes, source_label, is_online = fetch_remote_node_facts()
+    if not is_online:
+        log("[!] 離線狀態：無法連線至 Gitea 聯邦倉庫進行同步。")
+        return False
+
+    remote_keys = set()
+    for n in remote_nodes:
+        rh = str(n.get("hostname", "")).strip().lower()
+        if rh:
+            remote_keys.add(rh)
+            remote_keys.add(rh.split(".")[0])
+
+    missing_in_remote = [
+        node for k, node in local_by_key.items()
+        if k not in remote_keys and str(node.get("hostname", "")).lower() not in remote_keys
+    ]
+
+    log(f"本機節點清冊: {len(local_by_key)} 台 | 遠端聯邦倉庫: {len(remote_nodes)} 台 ({source_label})")
+    if unresolved:
+        log(f"[!] 下列本機目標無法解析 IPv4 位址，已略過: {', '.join(unresolved)}")
+
+    if not missing_in_remote:
+        log("[✓] 本機與遠端聯邦倉庫節點清冊已一致，無需推送新節點。")
+    else:
+        names = ", ".join(f"{n['hostname']}({n['primary_ip']})" for n in missing_in_remote)
+        log(f"[*] 發現 {len(missing_in_remote)} 台本機節點尚未註冊至遠端倉庫: {names}")
+        if dry_run:
+            log("[DRY-RUN] 僅預覽差異，未執行遠端寫入。")
+            return True
+
+        all_ok = True
+        for node in missing_in_remote:
+            hname = node["hostname"]
+            log(f" -> 正在派發 register-node-fact.yml 註冊 {hname} ({node['primary_ip']})...")
+            ok = register_node_fact_via_runner(hname, node, action="upsert", wait=True)
+            if ok:
+                log(f"    [✓] {hname} 已寫入遠端聯邦倉庫")
+            else:
+                log(f"    [✗] {hname} 寫入遠端聯邦倉庫失敗")
+                all_ok = False
+        if not all_ok:
+            return False
+
+    # 3. 同步更新本地快照與 inventory (若有 classifier.py)
+    classifier_script = OPS_DIR / "engine" / "classifier.py"
+    if classifier_script.exists():
+        log("[*] 正在執行 classifier.py --apply --sync-tools 更新本地快照...")
+        res = subprocess.run([sys.executable, str(classifier_script), "--apply", "--sync-tools"], capture_output=True, text=True)
+        if res.returncode == 0:
+            log("[✓] 本地快照與庫存同步完成！")
+        else:
+            log(f"[!] classifier.py 執行警告: {res.stderr.strip() or res.stdout.strip()}")
+    return True
 
 
 def load_bootstrap_pubkey(automation_user: str = None) -> str:
@@ -447,12 +688,8 @@ def interactive_menu():
             input("\n按 Enter 鍵返回選單...")
 
         elif choice_idx == 4:
-            classifier_script = OPS_DIR / "engine" / "classifier.py"
-            if classifier_script.exists():
-                ui_info("正在重新計算預分類與全網快照 (classifier.py --apply)...")
-                res = subprocess.run([sys.executable, str(classifier_script), "--apply", "--sync-tools"], capture_output=True, text=True)
-                print(res.stdout)
-                ui_success("全網快照與 hosts.yml 同步完成！")
+            ui_info("正在比對本機節點與遠端聯邦倉庫並執行同步...")
+            sync_nodes_to_federation(emit=print)
             input("\n按 Enter 鍵返回選單...")
 
         elif choice_idx == 5 or choice_idx == 0:
@@ -512,7 +749,8 @@ def main():
     subparsers.add_parser("list", help=t("node.cli_list", "List managed nodes"))
 
     # sync subcommand
-    subparsers.add_parser("sync", help=t("node.cli_sync", "Re-sync and recalculate node snapshots"))
+    sync_parser = subparsers.add_parser("sync", help=t("node.cli_sync", "Sync local node definitions to remote federation repo and recalculate snapshots"))
+    sync_parser.add_argument("--dry-run", action="store_true", help="Preview local vs remote node diff without pushing")
 
     args = parser.parse_args()
 
@@ -533,9 +771,9 @@ def main():
     elif args.subcommand == "list":
         list_nodes()
     elif args.subcommand == "sync":
-        classifier_script = OPS_DIR / "engine" / "classifier.py"
-        if classifier_script.exists():
-            subprocess.run([sys.executable, str(classifier_script), "--apply", "--sync-tools"])
+        ok = sync_nodes_to_federation(dry_run=getattr(args, "dry_run", False), emit=print)
+        if not ok:
+            sys.exit(1)
     else:
         interactive_menu()
 
