@@ -54,6 +54,10 @@ runs:
         fi
 
         cd "$WORK_DIR"
+        if [ -d "$WORK_DIR/group_vars" ] && [ ! -e "$WORK_DIR/inventory/group_vars" ]; then
+          mkdir -p "$WORK_DIR/inventory"
+          ln -s ../group_vars "$WORK_DIR/inventory/group_vars"
+        fi
         export ANSIBLE_HOST_KEY_CHECKING="False"
 
         set -- -i "$INVENTORY" "$PLAYBOOK"
