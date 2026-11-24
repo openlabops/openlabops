@@ -432,11 +432,42 @@ def probe_all_cluster_nodes(max_workers: int = 12, debug: bool = False) -> tuple
     回傳 (probe_results_dict, total_wall_clock_time)
     """
     t_start = time.time()
+    targets = list(CLUSTER_TARGETS)
+    if not targets:
+        try:
+            from core.gitea_api import fetch_remote_node_facts
+            from core.config import get_ansible_user, _resolve_target_key_path
+            remote_nodes, _, is_online = fetch_remote_node_facts()
+            if is_online and remote_nodes:
+                ans_u = get_ansible_user()
+                for n in remote_nodes:
+                    hname = n.get("hostname", "")
+                    hip = n.get("primary_ip", hname)
+                    if not hname or not hip:
+                        continue
+                    t_user = "root" if n.get("node_category") in ("appliance", "hypervisor") else ans_u
+                    k_path = _resolve_target_key_path(t_user)
+                    targets.append({
+                        "name": hname,
+                        "host": hip,
+                        "os": n.get("distribution", n.get("os_family", "Linux")),
+                        "mgr": "generic",
+                        "pkg_manager": "generic",
+                        "role": n.get("node_category", "server"),
+                        "appliance_type": n.get("appliance_type", "none"),
+                        "ssh_target": f"-i {k_path} {t_user}@{hip}",
+                        "target_user": t_user,
+                        "use_sudo": (t_user != "root"),
+                        "is_local": (hname in ("control-node", "control-node") or hip in ("127.0.0.1", "localhost")),
+                    })
+        except Exception:
+            pass
+
     def _worker(target):
         return probe_single_node(target, debug=debug)
 
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        results = list(executor.map(_worker, CLUSTER_TARGETS))
+        results = list(executor.map(_worker, targets))
     total_elapsed = time.time() - t_start
 
     # 轉為以 hostname 為 key 的字典

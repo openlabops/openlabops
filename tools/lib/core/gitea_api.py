@@ -568,6 +568,49 @@ def fetch_remote_node_facts() -> tuple:
             if added_ops:
                 sources.append(f"{ops_repo}/conf/nodes")
 
+    if not nodes_by_host:
+        runner_nodes, runner_src = fetch_node_facts_via_runner()
+        if runner_nodes:
+            return runner_nodes, runner_src, is_online
+
     return list(nodes_by_host.values()), ", ".join(sources), is_online
+
+
+def fetch_node_facts_via_runner(timeout: int = 45) -> tuple:
+    """
+    透過 ci-bot 派發 fetch-node-inventory.yml，由 Gitea Act Runner 檢出 configs/operations
+    並自 Job Log 邊界標記擷取最新節點事實 JSON 陣列（維持 ci-bot RBAC 隔離）。
+    """
+    ok = gitea_dispatch("fetch-node-inventory.yml", payload={"ref": "main"}, wait=True, timeout=timeout)
+    if not ok:
+        return [], ""
+
+    runs = get_action_runs(ACTION_REPO, owner=REPO_OWNER, page=1, limit=5, silent=True).get("workflow_runs", [])
+    if not runs:
+        return [], ""
+
+    run_id = runs[0].get("id")
+    for r in runs:
+        if "fetch-node-inventory" in str(r.get("name", "")).lower() or "fetch-node-inventory" in str(r.get("path", "")).lower():
+            run_id = r.get("id")
+            break
+    if not run_id:
+        return [], ""
+
+    jobs = get_run_jobs(run_id, ACTION_REPO, owner=REPO_OWNER)
+    for job in jobs:
+        logs = get_job_logs(job.get("id"), ACTION_REPO, owner=REPO_OWNER)
+        if "===OPENLAB_NODE_LIST_START===" in logs and "===OPENLAB_NODE_LIST_END===" in logs:
+            seg = logs.split("===OPENLAB_NODE_LIST_START===")[-1].split("===OPENLAB_NODE_LIST_END===")[0]
+            s_idx = seg.find("[")
+            e_idx = seg.rfind("]")
+            if s_idx != -1 and e_idx != -1:
+                try:
+                    data = json.loads(seg[s_idx:e_idx + 1])
+                    if isinstance(data, list):
+                        return data, f"{REPO_OWNER}/{ACTION_REPO} (Runner #{run_id})"
+                except Exception:
+                    pass
+    return [], ""
 
 
