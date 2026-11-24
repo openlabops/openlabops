@@ -506,17 +506,45 @@ def check_nodes_and_packages(live_nodes_map: dict = None) -> dict:
     for target in CLUSTER_TARGETS:
         hname = target["name"]
         d = live_nodes_map.get(hname, {})
-        nodes_report.append({
-            "hostname": hname,
-            "os": d.get("os", target.get("os", "Linux")),
-            "package_manager": d.get("package_manager", target.get("mgr", "pkg")),
-            "status": d.get("status", "ONLINE"),
-            "upg_count": d.get("upg_count", 0),
-            "upg_samples": d.get("upg_samples", []),
-            "reboot_required": d.get("reboot_required", False),
-            "reboot_reason": d.get("reboot_reason", ""),
-            "elapsed": d.get("elapsed", 0.0),
-        })
+        os_val = d.get("os", target.get("os", "Linux"))
+        status = d.get("status", "ONLINE")
+        if "bsd" in os_val.lower() and status == "ONLINE":
+            nodes_report.append({
+                "hostname": hname,
+                "os": os_val,
+                "package_manager": "pkg",
+                "status": status,
+                "upg_count": d.get("upg_count", 0),
+                "upg_samples": d.get("upg_samples", []),
+                "reboot_required": False,
+                "reboot_reason": "",
+                "elapsed": d.get("elapsed", 0.0),
+            })
+            fu_cnt = d.get("fu_count", 0)
+            fu_smp = d.get("fu_sample", "")
+            nodes_report.append({
+                "hostname": f"{hname}(base)",
+                "os": os_val,
+                "package_manager": "fbsd-base",
+                "status": status,
+                "upg_count": fu_cnt,
+                "upg_samples": [fu_smp] if fu_smp else [],
+                "reboot_required": d.get("reboot_required", False),
+                "reboot_reason": d.get("reboot_reason", ""),
+                "elapsed": 0.0,
+            })
+        else:
+            nodes_report.append({
+                "hostname": hname,
+                "os": os_val,
+                "package_manager": d.get("package_manager", target.get("mgr", "pkg")),
+                "status": status,
+                "upg_count": d.get("upg_count", 0),
+                "upg_samples": d.get("upg_samples", []),
+                "reboot_required": d.get("reboot_required", False),
+                "reboot_reason": d.get("reboot_reason", ""),
+                "elapsed": d.get("elapsed", 0.0),
+            })
 
     # Network 網路設備狀態 (僅在宣告檔有設定且啟用時才採集顯示，杜絕靜態偽造事實 [INV-04])
         nodes_report.append({

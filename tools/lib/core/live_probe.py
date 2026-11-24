@@ -227,6 +227,8 @@ elif [ -x /usr/bin/dnf ]; then
     if [ -n "$samples" ]; then upg_samples="$samples"; fi
 fi
 
+fu_count=0
+fu_sample=""
 reboot_required="false"
 reboot_reason=""
 if [ -f /var/run/reboot-required ] || [ -f /run/reboot-required ]; then
@@ -250,8 +252,8 @@ if [ -n "$upg_samples" ]; then
     IFS=$old_ifs
 fi
 
-printf '{"keys":[%s],"upg_count":%d,"upg_samples":[%s],"reboot_required":%s,"reboot_reason":"%s"}\n' \
-    "$keys_json" "$upg_count" "$samples_json" "$reboot_required" "$reboot_reason"
+printf '{"keys":[%s],"upg_count":%d,"upg_samples":[%s],"fu_count":%d,"fu_sample":"%s","reboot_required":%s,"reboot_reason":"%s"}\n' \
+    "$keys_json" "$upg_count" "$samples_json" "$fu_count" "$fu_sample" "$reboot_required" "$reboot_reason"
 '''
 
 
