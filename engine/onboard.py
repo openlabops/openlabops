@@ -1192,45 +1192,45 @@ def run_lab_node_tui(dialog=None):
                         f"  • 分類角色: {cat}\n"
                         f"  • 作業系統: {distro}\n"
                         f"  • 維運帳號: {target_node.get('target_user', 'lab')}\n\n"
-                        f"是否確認將此節點寫入集群事實庫 (conf/nodes/{hname}.json)？"
+                        f"是否確認將此節點註冊至遠端集群事實庫 (*-configs / *-operations)？"
                     )
                     if dialog.yesno("Confirm Inventory Addition", summary_msg, width=74, height=18):
-                        nodes_dir = _get_nodes_dir()
-                        nodes_dir.mkdir(parents=True, exist_ok=True)
-                        out_file = nodes_dir / f"{hname}.json"
-                        out_file.write_text(json.dumps(facts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                        if (OPS_DIR / ".git").exists():
+                            try:
+                                nodes_dir = _get_nodes_dir()
+                                nodes_dir.mkdir(parents=True, exist_ok=True)
+                                out_file = nodes_dir / f"{hname}.json"
+                                out_file.write_text(json.dumps(facts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                            except Exception:
+                                pass
 
-                        if dialog.yesno("Re-compile Inventory", "是否立即重新編譯 Ansible inventory/hosts.yml？"):
-                            def _do_clf(log_fn):
-                                log_fn("Executing classifier.py --apply...")
-                                r = subprocess.run([sys.executable, str(CLASSIFIER_PY), "--apply"], capture_output=True, text=True)
-                                for line in r.stdout.splitlines():
-                                    if line.strip():
-                                        log_fn(line.strip())
-                                return r.returncode == 0
-                            dialog.progress_box("Compiling Inventory", "classifier.py", _do_clf, width=76, height=20)
-
-                        # 透過 ci-bot 派發 register-node-fact.yml + deploy-ssh-keys.yml 至聯邦倉庫
-                        try:
-                            from tools.lib.core.gitea_api import gitea_dispatch, register_node_fact_via_runner
-                            register_node_fact_via_runner(hname, facts, action="upsert", wait=True)
-                            gitea_dispatch(
-                                "deploy-ssh-keys.yml",
-                                payload={
-                                    "ref": "main",
-                                    "inputs": {
-                                        "target_hosts": hname,
-                                        "target_user": target_node.get("target_user", "lab"),
-                                        "deploy_authorized_keys": "true",
-                                        "deploy_client_keys": "false",
+                        def _do_reg(log_fn):
+                            log_fn(f"Dispatching register-node-fact.yml for {hname}...")
+                            try:
+                                from tools.lib.core.gitea_api import gitea_dispatch, register_node_fact_via_runner
+                                ok_reg = register_node_fact_via_runner(hname, facts, action="upsert", wait=True)
+                                log_fn("Remote federation updated." if ok_reg else "Remote registration returned warning.")
+                                log_fn(f"Dispatching deploy-ssh-keys.yml for {hname}...")
+                                gitea_dispatch(
+                                    "deploy-ssh-keys.yml",
+                                    payload={
+                                        "ref": "main",
+                                        "inputs": {
+                                            "target_hosts": hname,
+                                            "target_user": target_node.get("target_user", "lab"),
+                                            "deploy_authorized_keys": "true",
+                                            "deploy_client_keys": "false",
+                                        },
                                     },
-                                },
-                                wait=False,
-                            )
-                        except Exception:
-                            pass
+                                    wait=False,
+                                )
+                                return ok_reg
+                            except Exception as e:
+                                log_fn(f"Error: {e}")
+                                return False
 
-                        dialog.msgbox("Onboarding Complete", f"節點 [{hname}] 已成功納管並完成集群配置（已派發 *-secrets 公鑰同步）！")
+                        dialog.progress_box("Registering Node to Federation", hname, _do_reg, width=76, height=20)
+                        dialog.msgbox("Onboarding Complete", f"節點 [{hname}] 已成功納管並同步至遠端集群事實庫！")
                     break
                 else:
                     fail_err = str(onboard_res[1] or "連線或提權逾時失敗")
