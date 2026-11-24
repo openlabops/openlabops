@@ -371,19 +371,23 @@ def ui_form(
 
     while True:
         if not first_render:
-            # 清除先前繪製行數 (標題 + 頂底框 + 欄位 + 空行 + 按鈕 + 提示)
-            lines_to_clear = num_fields + 6
+            # 清除先前繪製行數 (頂框 1 + 欄位 num_fields + 空行 1 + 按鈕 1 + 底框 1 = num_fields + 4)
+            lines_to_clear = num_fields + 4
             sys.stdout.write(f"\033[{lines_to_clear}A\r")
 
         first_render = False
 
         # 輸出現代化 Unicode 表單卡片
-        print(f"{C_CYAN}{C_BOLD}╭─ {title} {'─' * max(0, box_width - str_width(title) - 5)}╮{C_RESET}")
+        print(f"{C_CYAN}{C_BOLD}╭─ {title} {'─' * max(0, box_width - str_width(title) - 5)}╮{C_RESET}\033[K")
         for i, f in enumerate(form_data):
             is_active = (i == current_row)
             lbl = _ljust_cjk(f["label"], max_label_len)
             raw_val = str(f.get("value", ""))
             disp_val = ("*" * len(raw_val)) if f.get("secret") else raw_val
+            # 避免超長輸入撐破框線導致終端換行錯位
+            max_disp = max(4, val_box_width - (1 if is_active else 0))
+            while str_width(disp_val) > max_disp and len(disp_val) > 1:
+                disp_val = disp_val[1:]
             disp_w = str_width(disp_val)
 
             if is_active:
@@ -391,33 +395,34 @@ def ui_form(
                 field_content = f"{disp_val}█"
                 val_pad = " " * max(0, val_box_width - disp_w - 1)
                 val_box = f"{C_GREEN}[ {C_BOLD}{field_content}{C_RESET}{val_pad}{C_GREEN} ]{C_RESET}"
-                print(f"{C_CYAN}│{C_RESET}  {cursor}{C_BOLD}{lbl}{C_RESET} : {val_box} {C_CYAN}│{C_RESET}")
+                print(f"{C_CYAN}│{C_RESET}  {cursor}{C_BOLD}{lbl}{C_RESET} : {val_box} {C_CYAN}│{C_RESET}\033[K")
             else:
                 cursor = "  "
                 val_pad = " " * max(0, val_box_width - disp_w)
                 val_box = f"{C_DIM}[ {disp_val}{val_pad} ]{C_RESET}"
-                print(f"{C_CYAN}│{C_RESET}  {cursor}{lbl} : {val_box} {C_CYAN}│{C_RESET}")
+                print(f"{C_CYAN}│{C_RESET}  {cursor}{lbl} : {val_box} {C_CYAN}│{C_RESET}\033[K")
 
-        print(f"{C_CYAN}│{' ' * (box_width - 2)}│{C_RESET}")
+        print(f"{C_CYAN}│{' ' * (box_width - 2)}│{C_RESET}\033[K")
 
         # 按鈕列
-        submit_btn = f"{C_GREEN}{C_BOLD}[ 🚀 確定執行 (Submit) ]{C_RESET}" if current_row == num_fields else f"{C_DIM}[ 🚀 確定執行 (Submit) ]{C_RESET}"
-        cancel_btn = f"{C_RED}{C_BOLD}[ ❌ 取消 (Cancel) ]{C_RESET}" if current_row == num_fields + 1 else f"{C_DIM}[ ❌ 取消 (Cancel) ]{C_RESET}"
+        submit_lbl = "[ 🚀 確定執行 (Submit) ]"
+        cancel_lbl = "[ ❌ 取消 (Cancel) ]"
+        submit_btn = f"{C_GREEN}{C_BOLD}{submit_lbl}{C_RESET}" if current_row == num_fields else f"{C_DIM}{submit_lbl}{C_RESET}"
+        cancel_btn = f"{C_RED}{C_BOLD}{cancel_lbl}{C_RESET}" if current_row == num_fields + 1 else f"{C_DIM}{cancel_lbl}{C_RESET}"
         btn_line = f"  {submit_btn}    {cancel_btn}"
-        # 計算可顯示長度
-        btn_raw_len = 28 + 20
+        btn_raw_len = 2 + str_width(submit_lbl) + 4 + str_width(cancel_lbl)
         btn_padding = " " * max(0, box_width - btn_raw_len - 2)
-        print(f"{C_CYAN}│{C_RESET}{btn_line}{btn_padding}{C_CYAN}│{C_RESET}")
-        print(f"{C_CYAN}{C_BOLD}╰{'─' * (box_width - 2)}╯{C_RESET}")
+        print(f"{C_CYAN}│{C_RESET}{btn_line}{btn_padding}{C_CYAN}│{C_RESET}\033[K")
+        print(f"{C_CYAN}{C_BOLD}╰{'─' * (box_width - 2)}╯{C_RESET}\033[K")
 
         nav_tip = tip or "[↑/↓/Tab] 移動  [鍵入] 編輯  [Backspace] 刪除  [Enter] 下一欄/提交  [ESC] 取消"
         sys.stdout.write(f"{C_DIM}{nav_tip}{C_RESET}\033[K")
         sys.stdout.flush()
 
         key = _read_single_key()
-        if key in ("UP", "k", "K"):
+        if key == "UP" or (current_row >= num_fields and key in ("k", "K")):
             current_row = (current_row - 1) if current_row > 0 else (total_rows - 1)
-        elif key in ("DOWN", "j", "J", "TAB"):
+        elif key in ("DOWN", "TAB") or (current_row >= num_fields and key in ("j", "J")):
             current_row = (current_row + 1) if current_row < (total_rows - 1) else 0
         elif key == "BACKSPACE":
             if current_row < num_fields:

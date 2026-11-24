@@ -55,7 +55,7 @@ INVENTORY_DIR = OPS_DIR / "ansible" / "inventory"
 
 
 def _get_work_dir() -> Optional[Path]:
-    val = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("KIWI_INIT_WORK_DIR")
+    val = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("LAB_INIT_WORK_DIR")
     return Path(val) if val else None
 
 
@@ -1921,15 +1921,30 @@ def run_key_rotation_handover(targets, ephemeral_key_path, ephemeral_pubkey, all
     else:
         _log(f"  [•] Existing Permanent Key preserved: {C_GREEN}{perm_key}{C_RESET}")
 
-    if keygen_pub.exists():
+    # 一律優先由私鑰反推真實公鑰，避免殘留的不一致 *.key.pub 導致 OpenSSH identity_sign 失敗
+    derived_res = subprocess.run(["ssh-keygen", "-y", "-P", "", "-f", str(perm_key)], capture_output=True, text=True)
+    if derived_res.returncode == 0 and derived_res.stdout.strip():
+        derived_pub = derived_res.stdout.strip()
+        derived_body = " ".join(derived_pub.split()[:2])
+        if keygen_pub.exists():
+            existing_pub = keygen_pub.read_text(encoding="utf-8").strip()
+            existing_body = " ".join(existing_pub.split()[:2])
+            if existing_body == derived_body:
+                perm_pub_text = existing_pub
+            else:
+                _log(f"  {C_YELLOW}[!] Detected mismatched {keygen_pub.name}; regenerating from {perm_key.name}...{C_RESET}")
+                perm_pub_text = f"{derived_pub} {ansible_user}@openlab-master"
+                keygen_pub.write_text(perm_pub_text + "\n", encoding="utf-8")
+        else:
+            perm_pub_text = f"{derived_pub} {ansible_user}@openlab-master"
+        perm_pub.write_text(perm_pub_text + "\n", encoding="utf-8")
+    elif keygen_pub.exists():
         perm_pub_text = keygen_pub.read_text(encoding="utf-8").strip()
         perm_pub.write_text(perm_pub_text + "\n", encoding="utf-8")
     elif perm_pub.exists():
         perm_pub_text = perm_pub.read_text(encoding="utf-8").strip()
     else:
-        res = subprocess.run(["ssh-keygen", "-y", "-f", str(perm_key)], capture_output=True, text=True, check=True)
-        perm_pub_text = res.stdout.strip()
-        perm_pub.write_text(perm_pub_text + "\n", encoding="utf-8")
+        raise RuntimeError(f"Failed to derive or read public key for {perm_key}: {derived_res.stderr.strip()}")
 
     _log(f"  [✓] Permanent Key Generated: {C_GREEN}{perm_key}{C_RESET}")
     _log(f"  • Injecting Defined from IP Restriction: {C_YELLOW}from=\"{allowed_from_subnets}\"{C_RESET}")
@@ -1963,6 +1978,32 @@ def run_key_rotation_handover(targets, ephemeral_key_path, ephemeral_pubkey, all
             playbook_servers_rotated = True
         else:
             _log(f"  {C_YELLOW}[!] Note: Ansible playbook rotation output:\n{res.stdout.strip()[-300:] if res.stdout else ''}{C_RESET}")
+
+    def _run_ssh_with_backoff(cmd_list, stdin_data=None, retries=2):
+        """遇到 SSH 交握限流或瞬斷時進行短暫退避重試，避免觸發 MaxStartups / 防火牆限流"""
+        transient_markers = (
+            "kex_exchange_identification",
+            "Connection reset by peer",
+            "Connection closed by",
+            "Connection timed out",
+        )
+        last_res = None
+        for attempt in range(retries + 1):
+            last_res = subprocess.run(
+                cmd_list,
+                input=stdin_data,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            if last_res.returncode == 0:
+                return last_res
+            err_txt = last_res.stderr or ""
+            if attempt < retries and any(m in err_txt for m in transient_markers):
+                time.sleep(1.5 * (attempt + 1))
+                continue
+            return last_res
+        return last_res
 
     all_rotated = True
     for t in targets:
@@ -2022,80 +2063,68 @@ chmod 0600 "$AUTH_FILE"
 /sbin/mount -u -r /cf 2>/dev/null || true
 [ -x /sbin/auto-backup.sh ] && /sbin/auto-backup.sh >/dev/null 2>&1 || true
 """
-            # 決定登入執行的連線指令 (支援現有正式金鑰、臨時引導金鑰或節點指定私鑰)
+            # 決定登入執行的候選私鑰 (優先使用 Step 4 剛注入的臨時引導金鑰，再試正式金鑰與節點指定私鑰)
             candidate_keys = []
-            if perm_key and perm_key.exists():
-                candidate_keys.append(perm_key)
-            if ephemeral_key_path and ephemeral_key_path.exists() and ephemeral_key_path not in candidate_keys:
+            if ephemeral_key_path and ephemeral_key_path.exists():
                 candidate_keys.append(ephemeral_key_path)
+            if perm_key and perm_key.exists() and perm_key not in candidate_keys:
+                candidate_keys.append(perm_key)
             if t.get("key_file"):
                 kf = Path(os.path.expanduser(t["key_file"]))
                 if kf.exists() and kf not in candidate_keys:
                     candidate_keys.append(kf)
 
-            working_key = None
-            for cand_k in candidate_keys:
-                test_cmd = [
-                    "ssh",
-                    "-o", "BatchMode=yes",
-                    "-o", "StrictHostKeyChecking=accept-new",
-                    "-o", "UserKnownHostsFile=/dev/null",
-                    "-o", "IdentitiesOnly=yes",
-                    "-o", "ConnectTimeout=4",
-                    "-p", str(t_port),
-                    "-i", str(cand_k),
-                    f"{t_target_user}@{t_ip}",
-                    "true"
-                ]
-                r = subprocess.run(test_cmd, capture_output=True)
-                if r.returncode == 0:
-                    working_key = cand_k
-                    break
-
-            if working_key:
+            res = None
+            if candidate_keys:
+                # 單一 SSH 連線帶入多組 -i 金鑰，大幅降低對目標主機 Port 22 的握手頻率
                 cmd = [
                     "ssh",
                     "-o", "BatchMode=yes",
                     "-o", "StrictHostKeyChecking=accept-new",
                     "-o", "UserKnownHostsFile=/dev/null",
                     "-o", "IdentitiesOnly=yes",
+                    "-o", "ConnectTimeout=5",
                     "-p", str(t_port),
-                    "-i", str(working_key),
-                    f"{t_target_user}@{t_ip}",
-                    "sh"
                 ]
-                res = subprocess.run(cmd, input=rotate_script, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-            else:
+                for cand_k in candidate_keys:
+                    cmd.extend(["-i", str(cand_k)])
+                cmd.extend([f"{t_target_user}@{t_ip}", "sh"])
+                res = _run_ssh_with_backoff(cmd, stdin_data=rotate_script)
+
+            # 若候選金鑰皆遭拒絕 (Permission denied)，改用 PTY 密碼/指定金鑰備援執行
+            if res is None or (res.returncode != 0 and "Permission denied" in (res.stderr or "")):
                 # 若無免密金鑰可用，嘗試使用 PTY 模擬執行 (避免終端密碼提示破壞 Curses)
                 from engine.onboard import execute_pty_ssh
                 u = t.get("initial_user") or t.get("user") or t_target_user
                 p = t.get("initial_password")
                 k = t.get("key_file")
-                inner_cmd = (
-                    f"TARGET_USER={q_user}; "
-                    f"USER_HOME=$(getent passwd \"$TARGET_USER\" 2>/dev/null | cut -d: -f6 || echo \"/home/$TARGET_USER\"); "
-                    f"[ -z \"$USER_HOME\" ] && USER_HOME=\"/home/$TARGET_USER\"; "
-                    f"mkdir -p \"$USER_HOME/.ssh\" && chmod 0700 \"$USER_HOME/.ssh\" && "
-                    f"printf '%s\\n' {q_new_entry} >> \"$USER_HOME/.ssh/authorized_keys\" && "
-                    f"chmod 0600 \"$USER_HOME/.ssh/authorized_keys\""
-                )
-                code, out = execute_pty_ssh(
-                    host=t_ip,
-                    user=u,
-                    port=t_port,
-                    password=p,
-                    key_file=k,
-                    command=f"sudo sh -c {shlex.quote(inner_cmd)}",
-                    timeout=15
-                )
-                res = subprocess.CompletedProcess(args=[], returncode=code, stderr=out if code != 0 else "")
+                if p or k:
+                    inner_cmd = (
+                        f"TARGET_USER={q_user}; "
+                        f"USER_HOME=$(getent passwd \"$TARGET_USER\" 2>/dev/null | cut -d: -f6 || echo \"/home/$TARGET_USER\"); "
+                        f"[ -z \"$USER_HOME\" ] && USER_HOME=\"/home/$TARGET_USER\"; "
+                        f"mkdir -p \"$USER_HOME/.ssh\" && chmod 0700 \"$USER_HOME/.ssh\" && "
+                        f"printf '%s\\n' {q_new_entry} >> \"$USER_HOME/.ssh/authorized_keys\" && "
+                        f"chmod 0600 \"$USER_HOME/.ssh/authorized_keys\""
+                    )
+                    code, out = execute_pty_ssh(
+                        host=t_ip,
+                        user=u,
+                        port=t_port,
+                        password=p,
+                        key_file=k,
+                        command=f"sudo sh -c {shlex.quote(inner_cmd)}",
+                        timeout=15
+                    )
+                    res = subprocess.CompletedProcess(args=[], returncode=code, stderr=out if code != 0 else "")
 
-            if res.returncode != 0:
-                _log(f"  {C_RED}[✗] Failed to rotate key on {t_name} ({t_ip}): {res.stderr.strip()}{C_RESET}")
+            if res is None or res.returncode != 0:
+                err_msg = res.stderr.strip() if res and res.stderr else "Unknown SSH error"
+                _log(f"  {C_RED}[✗] Failed to rotate key on {t_name} ({t_ip}): {err_msg}{C_RESET}")
                 all_rotated = False
                 continue
 
-        # Stage 3: 使用正式新私鑰驗證連線 (嚴格 BatchMode 零卡死)
+        # Stage 3: 使用正式新私鑰驗證連線 (嚴格 BatchMode 零卡死，含限流退避重試)
         verify_cmd = [
             "ssh",
             "-o", "BatchMode=yes",
@@ -2108,7 +2137,7 @@ chmod 0600 "$AUTH_FILE"
             f"{t_target_user}@{t_ip}",
             "echo 'OK'"
         ]
-        v_res = subprocess.run(verify_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        v_res = _run_ssh_with_backoff(verify_cmd)
         if v_res.returncode == 0:
             _log(f"  {C_GREEN}[✓] Handover Verified on {t_name} ({t_ip}) with Permanent Key & Defined from IP!{C_RESET}")
         else:
@@ -2285,7 +2314,7 @@ def main():
     import atexit
     init_work_dir = Path(tempfile.mkdtemp(prefix="lab_init_work_"))
     os.environ["LAB_INIT_WORK_DIR"] = str(init_work_dir)
-    os.environ["KIWI_INIT_WORK_DIR"] = str(init_work_dir)
+    os.environ["LAB_INIT_WORK_DIR"] = str(init_work_dir)
     atexit.register(shutil.rmtree, init_work_dir, ignore_errors=True)
 
     ui_banner()
@@ -2379,11 +2408,11 @@ def main():
     if use_bsd_tui and targets:
         dialog = BSDDialog(title="OpenLabOps Master Operations Engine", subtitle="Day-0 Target Node Selection")
         checklist_items = []
-        for t in targets:
-            name = t.get("name", t.get("ip"))
-            ip = t.get("ip", name)
-            is_app = t.get("is_appliance", False)
-            is_end = t.get("is_endpoint", False)
+        for tgt in targets:
+            name = tgt.get("name", tgt.get("ip"))
+            ip = tgt.get("ip", name)
+            is_app = tgt.get("is_appliance", False)
+            is_end = tgt.get("is_endpoint", False)
 
             if is_app:
                 desc = "Appliance (Embedded BSD / Storage / Virtualization)"

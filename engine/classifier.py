@@ -24,7 +24,7 @@ from pathlib import Path
 OPS_DIR = Path(__file__).resolve().parent.parent
 BASE_DIR = OPS_DIR.parent
 INSTALLED_TOOLS_CONF_DIR = Path("/usr/local/bin/openlab/conf")
-_INIT_WORK_DIR = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("KIWI_INIT_WORK_DIR")
+_INIT_WORK_DIR = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("LAB_INIT_WORK_DIR")
 if _INIT_WORK_DIR:
     _INIT_WORK_PATH = Path(_INIT_WORK_DIR)
     CONF_NODES_DIR = _INIT_WORK_PATH / "conf" / "nodes"

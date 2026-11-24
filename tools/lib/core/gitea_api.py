@@ -505,3 +505,69 @@ def list_repo_contents(repo: str, dir_path: str = "", owner: str = None) -> list
         pass
     return []
 
+
+def fetch_remote_node_facts() -> tuple:
+    """
+    自 Gitea 聯邦倉庫 (configs/node-information 與 operations/conf/nodes) 動態抓取已納管節點事實。
+    回傳 (nodes_list, source_label, is_online)。
+    """
+    nodes_by_host = {}
+    sources = []
+    is_online = False
+
+    token = load_gitea_token()
+    headers = {"Accept": "application/json"}
+    if token:
+        headers["Authorization"] = f"token {token}"
+
+    # 探測 Gitea API 連線狀態
+    try:
+        req = urllib.request.Request(f"{GITEA_URL}/api/v1/version", headers=headers)
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status == 200:
+                is_online = True
+    except Exception:
+        return [], "", False
+
+    configs_repo = get_repo_name("configs")
+    if configs_repo:
+        entries = list_repo_contents(configs_repo, "node-information")
+        if isinstance(entries, list):
+            for entry in entries:
+                name = entry.get("name", "") if isinstance(entry, dict) else ""
+                if name.startswith("node_") and name.endswith(".json"):
+                    raw = fetch_repo_raw(configs_repo, f"node-information/{name}")
+                    if raw:
+                        try:
+                            data = json.loads(raw)
+                            h = data.get("hostname") or name[5:-5]
+                            nodes_by_host[h] = data
+                        except Exception:
+                            continue
+            if nodes_by_host:
+                sources.append(f"{configs_repo}/node-information")
+
+    ops_repo = get_repo_name("operations")
+    if ops_repo:
+        entries = list_repo_contents(ops_repo, "conf/nodes")
+        if isinstance(entries, list):
+            added_ops = False
+            for entry in entries:
+                name = entry.get("name", "") if isinstance(entry, dict) else ""
+                if name.endswith(".json") and name != "current.json":
+                    h = name[:-5]
+                    if h not in nodes_by_host:
+                        raw = fetch_repo_raw(ops_repo, f"conf/nodes/{name}")
+                        if raw:
+                            try:
+                                data = json.loads(raw)
+                                nodes_by_host[data.get("hostname", h)] = data
+                                added_ops = True
+                            except Exception:
+                                continue
+            if added_ops:
+                sources.append(f"{ops_repo}/conf/nodes")
+
+    return list(nodes_by_host.values()), ", ".join(sources), is_online
+
+

@@ -524,6 +524,21 @@ def upgrade_cluster(target_hosts: list = None, force: bool = False, serial: bool
     elif not failed_states:
         print(f"\n{C_GREEN}🎉 全數升級完成！所有節點均無需重開機，系統運作正常。{C_RESET}")
 
+    # 7. 檢查並同步維運工具鏈版本 (本機 + 遠端受管節點)
+    try:
+        import sync_ops_tools
+        local_ver = sync_ops_tools.get_local_version()
+        remote_ver = sync_ops_tools.get_remote_version()
+        if remote_ver and sync_ops_tools._parse_semver(remote_ver) > sync_ops_tools._parse_semver(local_ver):
+            ui_info(f"發現新版維運工具鏈 v{remote_ver} (本機目前: v{local_ver})，準備同步升級...")
+            if force or ui_confirm(f"是否同步更新本機與目標節點之維運工具鏈至 v{remote_ver}？", default="y"):
+                sync_ops_tools.update_tools_from_gitea(force=True, check_only=False)
+                from core.gitea_api import gitea_dispatch
+                dispatch_target = ",".join(target_hosts) if target_hosts else "all"
+                gitea_dispatch("deploy-ops-tools.yml", {"ref": "main", "inputs": {"target_hosts": dispatch_target}})
+    except Exception:
+        pass
+
 
 def main():
     from core.i18n import t

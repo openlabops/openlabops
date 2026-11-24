@@ -43,10 +43,10 @@ CONF_NODES_DIR = OPS_DIR / "conf" / "nodes"
 
 
 def _get_nodes_dir() -> Path:
-    env_dir = os.environ.get("LAB_NODES_DIR") or os.environ.get("KIWI_NODES_DIR")
+    env_dir = os.environ.get("LAB_NODES_DIR") or os.environ.get("LAB_NODES_DIR")
     if env_dir:
         return Path(env_dir)
-    work_dir = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("KIWI_INIT_WORK_DIR")
+    work_dir = os.environ.get("LAB_INIT_WORK_DIR") or os.environ.get("LAB_INIT_WORK_DIR")
     if work_dir:
         return Path(work_dir) / "conf" / "nodes"
     return CONF_NODES_DIR
@@ -311,11 +311,22 @@ def execute_pty_ssh(host, user="labadmin", port=22, password=None, key_file=None
             # 6. 登入或提權成功後串流輸入 (如 bootstrap_probe.sh)
             if input_stream and not sent_stream and "===OPENLAB_PIPE_READY===" in text:
                 time.sleep(0.1)
-                os.write(master, input_stream.encode("utf-8") + b"\nexit 0\n")
+                payload = input_stream.encode("utf-8") + b"\nexit 0\n"
+                # 分段寫入 PTY 避免超過遠端終端機 canonical 緩衝上限 (BSD/Linux MAX_CANON)
+                chunk_size = 512
+                for offset in range(0, len(payload), chunk_size):
+                    chunk = payload[offset:offset + chunk_size]
+                    while chunk:
+                        _, w_ready, _ = select.select([], [master], [], 2.0)
+                        if not w_ready:
+                            break
+                        written = os.write(master, chunk)
+                        chunk = chunk[written:]
+                    time.sleep(0.005)
                 sent_stream = True
 
-            # 7. 探針輸出完畢偵測 (僅在已發送串流探針後才觸發提早結束)
-            if sent_stream and "===OPENLAB_NODE_JSON_END===" in text:
+            # 7. 探針輸出完畢偵測 (排除腳本回顯 echo "===OPENLAB_NODE_JSON_END==="，僅匹配獨立輸出行)
+            if sent_stream and "===OPENLAB_NODE_JSON_END===" in text and 'echo "===OPENLAB_NODE_JSON_END==="' not in text:
                 try:
                     os.write(master, b"\nexit\n")
                 except Exception:
@@ -455,10 +466,10 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
         )
 
         if user == "root":
-            remote_cmd = f"echo '===OPENLAB_PIPE_READY==='; {env_vars} sh"
+            remote_cmd = f"stty -echo 2>/dev/null || true; echo '===OPENLAB_PIPE_READY==='; {env_vars} sh"
         else:
-            # 非 root 預設使用者：透過 sudo 提權執行探針
-            remote_cmd = f"sudo -p '[sudo] password for %u: ' env {env_vars} sh -c 'echo \"===OPENLAB_PIPE_READY===\"; exec sh'"
+            # 非 root 預設使用者：透過 sudo 提權執行探針，並關閉遠端 PTY echo 避免腳本回顯污染輸出
+            remote_cmd = f"sudo -p '[sudo] password for %u: ' sh -c 'stty -echo 2>/dev/null || true; echo \"===OPENLAB_PIPE_READY===\"; exec env {env_vars} sh'"
 
         if not prompt_callback and interactive and not callback and sys.stdin.isatty():
             def _cli_prompt(p_msg: str, secret: bool = True) -> Optional[str]:
@@ -1241,24 +1252,33 @@ def run_lab_node_tui(dialog=None):
         elif choice == "list":
             lines = [f"{'主機名稱':<12} {'主要 IP':<16} {'分類角色':<12} {'系統發行版'}"]
             lines.append("-" * 64)
-            nodes_count = 0
-            for p in sorted(_get_nodes_dir().glob("*.json")):
-                if p.name in ("current.json",):
-                    continue
-                try:
-                    d = json.loads(p.read_text(encoding="utf-8"))
-                    h = d.get("hostname", p.stem)
+            nodes_map = {}
+            source_label = ""
+            is_online = False
+            # 嚴格自遠端 4-Repo 聯邦 (Gitea configs/operations) 抓取即時節點事實；離線即顯示離線
+            try:
+                from tools.lib.core.gitea_api import fetch_remote_node_facts
+                remote_nodes, source_label, is_online = fetch_remote_node_facts()
+                for d in remote_nodes:
+                    h = d.get("hostname", "")
+                    if h:
+                        nodes_map[h] = d
+            except Exception:
+                is_online = False
+
+            if not is_online:
+                lines.append("  (離線狀態：無法連線至 Gitea 聯邦倉庫取得節點事實)")
+            elif not nodes_map:
+                lines.append("  (目前尚未有任何節點事實紀錄)")
+            else:
+                for h in sorted(nodes_map.keys()):
+                    d = nodes_map[h]
                     ip = d.get("primary_ip", "")
                     cat = d.get("node_category", "server")
                     os_name = f"{d.get('distribution', d.get('os_family', ''))}"
                     lines.append(f"{h:<12} {ip:<16} {cat:<12} {os_name}")
-                    nodes_count += 1
-                except Exception:
-                    continue
-            if nodes_count == 0:
-                lines.append("  (目前尚未有任何節點事實紀錄)")
-            else:
-                lines.insert(0, f"全網已納管節點總數: {nodes_count} 台\n")
+                src_info = f" (來源: {source_label})" if source_label else ""
+                lines.insert(0, f"全網已納管節點總數: {len(nodes_map)} 台{src_info}\n")
             dialog.msgbox("Managed Nodes Ground Truth", "\n".join(lines), width=76, height=22)
 
         elif choice == "classify":
