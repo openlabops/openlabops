@@ -138,9 +138,9 @@ if [ "$SKIP_DOOR" != "true" ] && [ -n "$BOOTSTRAP_PUBKEY" ]; then
             fi
         fi
 
-        # 確保使用者帳號未被 shadow 鎖定 (Alpine/Busybox adduser -D 預設鎖定為 ! 導致拒絕公鑰認證)
+        # 確保使用者帳號未被 shadow 鎖定 (Alpine ! 或 RHEL/Oracle !! 預設鎖定導致拒絕公鑰認證)
         if [ -f /etc/shadow ]; then
-            sed -i "s/^${BOOTSTRAP_USER}:!:/${BOOTSTRAP_USER}:*:/" /etc/shadow 2>/dev/null || true
+            sed -i "s/^${BOOTSTRAP_USER}:!!*:/${BOOTSTRAP_USER}:*:/" /etc/shadow 2>/dev/null || true
         fi
         passwd -u "$BOOTSTRAP_USER" >/dev/null 2>&1 || true
 
@@ -203,6 +203,9 @@ if [ "$SKIP_DOOR" != "true" ] && [ -n "$BOOTSTRAP_PUBKEY" ]; then
             chown -R "$BOOTSTRAP_USER:wheel" "$SSH_DIR" 2>/dev/null || chown -R "$BOOTSTRAP_USER" "$SSH_DIR"
         else
             chown -R "$BOOTSTRAP_USER:$BOOTSTRAP_USER" "$SSH_DIR" 2>/dev/null || chown -R "$BOOTSTRAP_USER" "$SSH_DIR"
+        fi
+        if command -v restorecon >/dev/null 2>&1; then
+            restorecon -RF "$SSH_DIR" >/dev/null 2>&1 || true
         fi
 
         # 1.5 確保 SSH 服務開機自啟
