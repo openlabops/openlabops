@@ -613,12 +613,15 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
             port=port,
             key_file=priv_key,
             command="whoami",
-            timeout=10
+            timeout=10,
+            prompt_callback=prompt_callback
         )
         if handover_code == 0 and target_user in handover_out:
             emit(f"  {C_GREEN}[✓] Handover Verified: Authenticated as '{target_user}' via Key!{C_RESET}")
         else:
-            emit(f"  {C_YELLOW}[!] Notice: Direct handover verification returned code {handover_code}{C_RESET}")
+            last_msg = handover_out.strip().splitlines()[-1] if handover_out.strip() else ""
+            detail = f" ({last_msg[:100]})" if last_msg else ""
+            emit(f"  {C_YELLOW}[!] Notice: Direct handover verification returned code {handover_code}{detail}{C_RESET}")
 
         # 6. 人類確認與落盤 (僅在 CLI 非回調模式下執行互動提示)
         if interactive and not callback:
