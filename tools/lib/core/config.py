@@ -446,7 +446,7 @@ def get_cluster_targets(include_remote_cache: bool = True) -> list:
             t_user = st.get("target_user") or get_ansible_user()
             k_path = _resolve_target_key_path(t_user)
             st["ssh_target"] = f"-i {k_path} {t_user}@{st.get('host', st.get('name', 'localhost'))}"
-    static_by_name = {t["name"]: t for t in static_targets if "name" in t}
+    static_by_name = {t["name"].split(".")[0].lower(): t for t in static_targets if "name" in t}
 
     # 優先自目前專案 conf/nodes/*.json 即時動態載入目標清單，若無則與遠端聯邦快取比對同步
     nodes_dir = TOOLS_ROOT.parent / "conf" / "nodes"
@@ -485,8 +485,19 @@ def get_cluster_targets(include_remote_cache: bool = True) -> list:
                 pass
 
     if node_items:
-        dynamic_targets = []
+        # 依短主機名去重 (避免同時存在 Base 與 base)
+        deduped_items = {}
         for n in node_items:
+            hname = str(n.get("hostname", "")).strip()
+            if not hname:
+                continue
+            sk = hname.split(".")[0].lower()
+            prev = deduped_items.get(sk)
+            if prev is None or (n.get("hardware") and not prev.get("hardware")):
+                deduped_items[sk] = n
+
+        dynamic_targets = []
+        for n in deduped_items.values():
             if not n.get("always_online", True):
                 continue
             hname = n.get("hostname", "")
@@ -528,6 +539,14 @@ def get_cluster_targets(include_remote_cache: bool = True) -> list:
                 login_user = target_user
                 key_path = _resolve_target_key_path(login_user)
 
+            short_key = hname.split(".")[0].lower()
+            st_override = static_by_name.get(short_key, {})
+            if st_override.get("ssh_target") and not is_openlab() and app_type not in ("storage", "kvm"):
+                eff_ssh_target = st_override["ssh_target"]
+            else:
+                eff_ssh_target = f"-i {key_path} {login_user}@{host_ip}"
+            eff_use_sudo = st_override["use_sudo"] if "use_sudo" in st_override else (login_user != "root")
+
             dynamic_targets.append({
                 "name": hname,
                 "host": host_ip,
@@ -536,9 +555,9 @@ def get_cluster_targets(include_remote_cache: bool = True) -> list:
                 "pkg_manager": mgr,
                 "role": n.get("node_category", "server"),
                 "appliance_type": app_type if not is_openlab() else "none",
-                "ssh_target": f"-i {key_path} {login_user}@{host_ip}",
+                "ssh_target": eff_ssh_target,
                 "target_user": login_user,
-                "use_sudo": (login_user != "root"),
+                "use_sudo": eff_use_sudo,
                 "is_storage": False,
                 "is_kvm": False,
                 "is_local": (hname == "control-node" or host_ip in ("127.0.0.1", "localhost")),

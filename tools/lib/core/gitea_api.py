@@ -738,6 +738,22 @@ def _write_node_cache(nodes: list, source_label: str, marker: str):
             pass
 
 
+def _dedupe_node_facts(nodes: list) -> list:
+    """依短主機名去重節點清單，優先保留含完整硬體/金鑰資訊之紀錄"""
+    dedup = {}
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        h = str(n.get("hostname", "")).strip()
+        if not h:
+            continue
+        sk = h.split(".")[0].lower()
+        prev = dedup.get(sk)
+        if prev is None or (n.get("hardware") and not prev.get("hardware")) or (n.get("authorized_keys") and not prev.get("authorized_keys")):
+            dedup[sk] = n
+    return list(dedup.values())
+
+
 def sync_remote_node_cache_if_needed(force: bool = False) -> tuple:
     """
     比對本機節點快取與遠端聯邦倉庫標記：
@@ -771,14 +787,16 @@ def sync_remote_node_cache_if_needed(force: bool = False) -> tuple:
         return cached_nodes, cached_meta.get("source", "offline-cache"), False
 
     if not force and cached_nodes and marker and cached_meta.get("marker") == marker:
-        return cached_nodes, cached_meta.get("source", "cache"), True
+        deduped = _dedupe_node_facts(cached_nodes)
+        return deduped, cached_meta.get("source", "cache"), True
 
     nodes, source_label, ok_online = fetch_remote_node_facts()
     if ok_online and nodes:
+        nodes = _dedupe_node_facts(nodes)
         post_marker, _ = get_remote_federation_marker()
         _write_node_cache(nodes, source_label, post_marker or marker)
         return nodes, source_label, True
 
-    return cached_nodes, cached_meta.get("source", source_label), ok_online
+    return _dedupe_node_facts(cached_nodes), cached_meta.get("source", source_label), ok_online
 
 

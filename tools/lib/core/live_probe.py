@@ -289,6 +289,9 @@ def probe_single_node(node: dict, debug: bool = False) -> dict:
                 targets_to_try.append(node["ssh_target"])
             host_val = node.get("host")
             if host_val:
+                # 優先嘗試原生 host_val，以便直接套用 ~/.ssh/config 之 User 與 IdentityFile
+                if host_val not in targets_to_try:
+                    targets_to_try.append(host_val)
                 for u in [node.get("target_user"), "lab", "ansible", "labadmin", "root"]:
                     if not u:
                         continue
@@ -302,8 +305,6 @@ def probe_single_node(node: dict, debug: bool = False) -> dict:
                     tgt_simple = f"{u}@{host_val}"
                     if tgt_simple not in targets_to_try:
                         targets_to_try.append(tgt_simple)
-                if host_val not in targets_to_try:
-                    targets_to_try.append(host_val)
 
             success = False
 
