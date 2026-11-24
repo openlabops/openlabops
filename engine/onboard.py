@@ -1186,51 +1186,43 @@ def run_lab_node_tui(dialog=None):
                     distro = facts.get("distribution", "Unknown")
                     cat = facts.get("node_category", "server")
 
-                    summary_msg = (
-                        f"節點採集與驗證成功！\n\n"
-                        f"  • 主機名稱: {hname} ({pip})\n"
-                        f"  • 分類角色: {cat}\n"
-                        f"  • 作業系統: {distro}\n"
-                        f"  • 維運帳號: {target_node.get('target_user', 'lab')}\n\n"
-                        f"是否確認將此節點註冊至遠端集群事實庫 (*-configs / *-operations)？"
-                    )
-                    if dialog.yesno("Confirm Inventory Addition", summary_msg, width=74, height=18):
-                        if (OPS_DIR / ".git").exists():
-                            try:
-                                nodes_dir = _get_nodes_dir()
-                                nodes_dir.mkdir(parents=True, exist_ok=True)
-                                out_file = nodes_dir / f"{hname}.json"
-                                out_file.write_text(json.dumps(facts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-                            except Exception:
-                                pass
+                    if (OPS_DIR / ".git").exists():
+                        try:
+                            nodes_dir = _get_nodes_dir()
+                            nodes_dir.mkdir(parents=True, exist_ok=True)
+                            out_file = nodes_dir / f"{hname}.json"
+                            out_file.write_text(json.dumps(facts, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                        except Exception:
+                            pass
 
-                        def _do_reg(log_fn):
-                            log_fn(f"Dispatching register-node-fact.yml for {hname}...")
-                            try:
-                                from tools.lib.core.gitea_api import gitea_dispatch, register_node_fact_via_runner
-                                ok_reg = register_node_fact_via_runner(hname, facts, action="upsert", wait=True)
-                                log_fn("Remote federation updated." if ok_reg else "Remote registration returned warning.")
-                                log_fn(f"Dispatching deploy-ssh-keys.yml for {hname}...")
-                                gitea_dispatch(
-                                    "deploy-ssh-keys.yml",
-                                    payload={
-                                        "ref": "main",
-                                        "inputs": {
-                                            "target_hosts": hname,
-                                            "target_user": target_node.get("target_user", "lab"),
-                                            "deploy_authorized_keys": "true",
-                                            "deploy_client_keys": "false",
-                                        },
+                    def _do_reg(log_fn):
+                        log_fn(f"Node: {hname} ({pip}) | {cat} | {distro}")
+                        log_fn(f"Dispatching register-node-fact.yml for {hname}...")
+                        try:
+                            from tools.lib.core.gitea_api import gitea_dispatch, register_node_fact_via_runner
+                            ok_reg = register_node_fact_via_runner(hname, facts, action="upsert", wait=True)
+                            log_fn("Remote federation updated." if ok_reg else "Remote registration returned warning.")
+                            log_fn(f"Dispatching deploy-ssh-keys.yml for {hname}...")
+                            gitea_dispatch(
+                                "deploy-ssh-keys.yml",
+                                payload={
+                                    "ref": "main",
+                                    "inputs": {
+                                        "target_hosts": hname,
+                                        "target_user": target_node.get("target_user", "lab"),
+                                        "deploy_authorized_keys": "true",
+                                        "deploy_client_keys": "false",
                                     },
-                                    wait=False,
-                                )
-                                return ok_reg
-                            except Exception as e:
-                                log_fn(f"Error: {e}")
-                                return False
+                                },
+                                wait=False,
+                            )
+                            return ok_reg
+                        except Exception as e:
+                            log_fn(f"Error: {e}")
+                            return False
 
-                        dialog.progress_box("Registering Node to Federation", hname, _do_reg, width=76, height=20)
-                        dialog.msgbox("Onboarding Complete", f"節點 [{hname}] 已成功納管並同步至遠端集群事實庫！")
+                    dialog.progress_box("Registering Node to Federation", hname, _do_reg, width=76, height=20)
+                    dialog.msgbox("Onboarding Complete", f"節點 [{hname}] ({pip}) 已成功納管並自動同步至遠端集群事實庫！")
                     break
                 else:
                     fail_err = str(onboard_res[1] or "連線或提權逾時失敗")
