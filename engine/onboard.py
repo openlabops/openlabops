@@ -329,7 +329,7 @@ def execute_pty_ssh(host, user="labadmin", port=22, password=None, key_file=None
             # 6. 登入或提權成功後串流輸入 (如 bootstrap_probe.sh)
             if input_stream and not sent_stream and "===OPENLAB_PIPE_READY===" in text:
                 time.sleep(0.1)
-                payload = input_stream.encode("utf-8") + b"\nexit 0\n"
+                payload = input_stream.encode("utf-8") + b"\n===OPENLAB_PROBE_EOF===\n"
                 # 分段寫入 PTY 避免超過遠端終端機 canonical 緩衝上限 (BSD/Linux MAX_CANON)
                 chunk_size = 512
                 for offset in range(0, len(payload), chunk_size):
@@ -483,11 +483,18 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
             f"BOOTSTRAP_KEY_OPTIONS={shlex.quote(str(key_options))}"
         )
 
+        probe_runner = (
+            "stty -echo 2>/dev/null || true; "
+            "echo \"===OPENLAB_PIPE_READY===\"; "
+            "_tp=\"/tmp/.openlab_probe_$$.sh\"; : > \"$_tp\"; "
+            "while IFS= read -r _l; do [ \"$_l\" = \"===OPENLAB_PROBE_EOF===\" ] && break; printf \"%s\\n\" \"$_l\" >> \"$_tp\"; done; "
+            "sh \"$_tp\"; _rc=$?; rm -f \"$_tp\"; exit $_rc"
+        )
         if user == "root":
-            remote_cmd = f"stty -echo 2>/dev/null || true; echo '===OPENLAB_PIPE_READY==='; {env_vars} sh"
+            remote_cmd = f"{env_vars} sh -c '{probe_runner}'"
         else:
-            # 非 root 預設使用者：env 置於 sh -c '...' 外部避免 shlex 單引號衝突，並於 sh 內關閉遠端 PTY echo
-            remote_cmd = f"sudo -p '[sudo] password for %u: ' env {env_vars} sh -c 'stty -echo 2>/dev/null || true; echo \"===OPENLAB_PIPE_READY===\"; exec sh'"
+            # 非 root 預設使用者：env 置於 sh -c '...' 外部避免 shlex 單引號衝突，並以非互動暫存檔執行探針
+            remote_cmd = f"sudo -p '[sudo] password for %u: ' env {env_vars} sh -c '{probe_runner}'"
 
         if not prompt_callback and interactive and not callback and sys.stdin.isatty():
             def _cli_prompt(p_msg: str, secret: bool = True) -> Optional[str]:
