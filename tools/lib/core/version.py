@@ -49,16 +49,19 @@ def get_remote_version() -> str:
     if token:
         headers["Authorization"] = f"token {token}"
 
-    from core.config import get_git_origin_info, get_repo_name
+    from core.config import get_git_origin_info, get_repo_name, get_admin_user, is_openlab
     origin_owner, origin_repo = get_git_origin_info()
     ops_repo = get_repo_name("operations")
+    master_repo = "openlabops" if is_openlab() else "openlabops"
+    admin_owner = get_admin_user()
     candidates = []
-    if ops_repo:
-        candidates.append((REPO_OWNER, ops_repo))
     if origin_owner and origin_repo:
         candidates.append((origin_owner, origin_repo))
-    for r in ("openlab-operations", "openlabops"):
-        candidates.append((REPO_OWNER, r))
+    if admin_owner:
+        candidates.append((admin_owner, master_repo))
+    if ops_repo:
+        candidates.append((REPO_OWNER, ops_repo))
+    candidates.append((REPO_OWNER, master_repo))
 
     seen = set()
     for owner, repo_name in candidates:

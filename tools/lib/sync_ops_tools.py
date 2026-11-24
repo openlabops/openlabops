@@ -105,18 +105,22 @@ def update_tools_from_gitea(force: bool = False, check_only: bool = False) -> bo
         tar_path = os.path.join(tmp_dir, "tools.tar.gz")
         downloaded = False
         last_err = None
-        from core.config import get_git_origin_info, get_repo_name
+        from core.config import get_git_origin_info, get_repo_name, get_admin_user, is_openlab
         origin_owner, origin_repo = get_git_origin_info()
         ops_repo = get_repo_name("operations")
+        master_repo = "openlabops" if is_openlab() else "openlabops"
+        admin_owner = get_admin_user()
         repo_candidates = []
-        if ops_repo:
-            repo_candidates.append((REPO_OWNER, ops_repo, "main"))
         if origin_owner and origin_repo:
             repo_candidates.append((origin_owner, origin_repo, "master"))
             repo_candidates.append((origin_owner, origin_repo, "main"))
-        for r in ("openlab-operations", "openlabops", "openlab-tools"):
-            repo_candidates.append((REPO_OWNER, r, "main"))
-            repo_candidates.append((REPO_OWNER, r, "master"))
+        if admin_owner:
+            repo_candidates.append((admin_owner, master_repo, "master"))
+            repo_candidates.append((admin_owner, master_repo, "main"))
+        if ops_repo:
+            repo_candidates.append((REPO_OWNER, ops_repo, "main"))
+        repo_candidates.append((REPO_OWNER, master_repo, "main"))
+        repo_candidates.append((REPO_OWNER, master_repo, "master"))
 
         seen_urls = set()
         for owner_cand, repo_cand, branch_cand in repo_candidates:
@@ -147,7 +151,7 @@ def update_tools_from_gitea(force: bool = False, check_only: bool = False) -> bo
                     tar.extractall(path=tmp_dir)
 
             extracted_root = None
-            for cand in ("openlab-operations", "openlabops", "openlab-tools"):
+            for cand in ("openlabops", "openlab-operations", "openlabops"):
                 cand_path = os.path.join(tmp_dir, cand)
                 if os.path.exists(cand_path):
                     extracted_root = cand_path

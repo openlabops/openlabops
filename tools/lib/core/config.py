@@ -124,18 +124,29 @@ def get_gitea_url() -> str:
 
 
 def get_git_origin_info() -> tuple:
-    """從當前 Git 工作區的 origin remote URL 解析 (owner, repo)"""
+    """從當前或已知 Git 工作區的 origin remote URL 解析 (owner, repo)"""
     import subprocess
     import re
-    try:
-        res = subprocess.run(["git", "config", "--get", "remote.origin.url"], cwd=str(TOOLS_ROOT.parent), capture_output=True, text=True, timeout=2)
-        if res.returncode == 0 and res.stdout.strip():
-            url = res.stdout.strip()
-            m = re.search(r'[:/]([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+?)(?:\.git)?$', url)
-            if m:
-                return m.group(1), m.group(2)
-    except Exception:
-        pass
+    sudo_user = os.environ.get("SUDO_USER", "")
+    user_home = Path(f"/home/{sudo_user}") if sudo_user else Path.home()
+    candidates = [
+        Path.cwd(),
+        TOOLS_ROOT.parent,
+        user_home / "openlabops",
+        user_home / "openlabops",
+    ]
+    for cand in candidates:
+        if not (cand / ".git").exists():
+            continue
+        try:
+            res = subprocess.run(["git", "config", "--get", "remote.origin.url"], cwd=str(cand), capture_output=True, text=True, timeout=2)
+            if res.returncode == 0 and res.stdout.strip():
+                url = res.stdout.strip()
+                m = re.search(r'[:/]([a-zA-Z0-9_.-]+)/([a-zA-Z0-9_.-]+?)(?:\.git)?$', url)
+                if m:
+                    return m.group(1), m.group(2)
+        except Exception:
+            pass
     return "", ""
 
 
