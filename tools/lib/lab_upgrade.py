@@ -31,10 +31,10 @@ if LIB_DIR not in sys.path:
 
 from core.ui_theme import ui_header, ui_kv, ui_divider, ui_info, ui_success, ui_warn, ui_error, C_BOLD, C_RESET, C_CYAN, C_GREEN, C_YELLOW, C_RED, C_DIM
 from core.ui_menu import ui_confirm, ui_select
-from core.config import get_path, get_ansible_user, is_openlab, TOOLS_ROOT
+from core.config import get_path, get_ansible_user, is_openlab, TOOLS_ROOT, _resolve_target_key_path
 from core.live_probe import CLUSTER_TARGETS, probe_all_cluster_nodes, probe_single_node
 
-ANSIBLE_KEY = get_path("ssh_dir", os.path.expanduser("~/.ssh")) + "/ansible.key"
+ANSIBLE_KEY = os.path.expanduser(_resolve_target_key_path(get_ansible_user()))
 USER_KEY = get_path("ssh_dir", os.path.expanduser("~/.ssh")) + "/id_user.key"
 _UPGRADE_LOG_DIR = tempfile.mkdtemp(prefix="lab-upgrade-")
 atexit.register(lambda: shutil.rmtree(_UPGRADE_LOG_DIR, ignore_errors=True))
@@ -99,6 +99,12 @@ def get_upgrade_command(target: dict) -> tuple:
     ssh_dest = shlex.quote(f"{target_user}@{host_addr}")
     ssh_key = shlex.quote(ANSIBLE_KEY)
 
+    if target.get("ssh_target"):
+        tokens = [os.path.expanduser(tok) if tok.startswith("~") else tok for tok in shlex.split(target["ssh_target"])]
+        ssh_target_expr = " ".join(shlex.quote(tok) for tok in tokens)
+    else:
+        ssh_target_expr = f"-i {shlex.quote(ANSIBLE_KEY)} {ssh_dest}"
+
     if target.get("is_local"):
         # Local system package manager
         if shutil.which("yay"):
@@ -111,26 +117,24 @@ def get_upgrade_command(target: dict) -> tuple:
             return "sudo dnf upgrade -y", "local"
         return "yay -Syu --noconfirm --needed", "local"
 
-    if mgr in ("dnf", "yum"):
-        cmd = f"ssh -o BatchMode=yes -i {ssh_key} {ssh_dest} 'sudo dnf upgrade -y'"
-        return cmd, "remote_dnf"
+    remote_cmds = {
+        "dnf": ("sudo dnf upgrade -y", "remote_dnf"),
+        "yum": ("sudo dnf upgrade -y", "remote_dnf"),
+        "apt": ("sudo apt-get update && sudo apt-get dist-upgrade -y", "remote_apt"),
+        "pacman": ("sudo pacman -Syu --noconfirm", "remote_pacman"),
+        "apk": ("sudo apk update && sudo apk upgrade", "remote_apk"),
+        "tdnf": ("sudo tdnf update -y", "remote_photon"),
+    }
+    if mgr in remote_cmds:
+        remote_body, mode = remote_cmds[mgr]
+        cmd = f"ssh -o BatchMode=yes {ssh_target_expr} '{remote_body}'"
+        return cmd, mode
 
-    if mgr == "apt":
-        cmd = f"ssh -o BatchMode=yes -i {ssh_key} {ssh_dest} 'sudo apt-get update && sudo apt-get dist-upgrade -y'"
-        return cmd, "remote_apt"
-
-    if mgr == "pacman":
-        cmd = f"ssh -o BatchMode=yes -i {ssh_key} {ssh_dest} 'sudo pacman -Syu --noconfirm'"
-        return cmd, "remote_pacman"
-
-    if mgr == "apk":
-        cmd = f"ssh -o BatchMode=yes -i {ssh_key} {ssh_dest} 'sudo apk update && sudo apk upgrade'"
-        return cmd, "remote_apk"
-
-    if mgr == "tdnf":
-        # Photon OS Core Servers
-        cmd = f"ssh -o BatchMode=yes -i {ssh_key} {ssh_dest} 'sudo tdnf update -y'"
-        return cmd, "remote_photon"
+    if not is_openlab():
+        if mgr == "pkg" and hname.split(".")[0].lower() == "gateway":
+            # Gateway (Base System + Ports/Pkg)
+            cmd = f"ssh -o BatchMode=yes {ssh_target_expr} \"sh -c 'if sudo system-update updatesready >/dev/null 2>&1; then sudo system-update install; fi; sudo pkg upgrade -y'\""
+            return cmd, "remote_bsd"
 
     return "", f"不支援自動升級或嵌入式系統: {hname}"
 
