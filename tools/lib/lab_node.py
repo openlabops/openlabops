@@ -165,6 +165,7 @@ def run_node_onboarding(
     login_user: str = "root",
     automation_user: str = None,
     key_file: str = None,
+    password: str = None,
     node_category: str = None,
     always_online: bool = None,
     appliance_type: str = "none"
@@ -207,6 +208,7 @@ def run_node_onboarding(
         host=target_ip,
         user=login_user,
         port=ssh_port,
+        password=password,
         key_file=os.path.expanduser(key_file) if key_file else None,
         target_user=automation_user,
         allowed_subnets=active_subnets,
@@ -383,6 +385,7 @@ def interactive_menu():
                 {"key": "ssh_port", "label": "SSH 連線埠號", "value": "22"},
                 {"key": "login_user", "label": "初始登入帳號", "value": default_login_user},
                 {"key": "key_file", "label": "初始登入私鑰 (可留空使用密碼)", "value": ""},
+                {"key": "password", "label": "初始登入 / Sudo 密碼 (可留空)", "value": "", "secret": True},
                 {"key": "auto_user", "label": "建立自動化帳號", "value": ansible_usr},
             ]
             res = ui_form(f"🚀 步驟 2/3: 填寫連線參數 ({node_category.upper()})", form_fields)
@@ -394,10 +397,12 @@ def interactive_menu():
                 ssh_port_str = str(res.get("ssh_port", 22)).strip() or "22"
                 login_user = res.get("login_user", default_login_user).strip() or default_login_user
                 key_file = res.get("key_file", "").strip() or None
+                password = res.get("password", "").strip() or None
                 auto_user = res.get("auto_user", ansible_usr).strip() or ansible_usr
                 run_node_onboarding(
                     target_ip, int(ssh_port_str), login_user, auto_user,
                     key_file=key_file,
+                    password=password,
                     node_category=node_category,
                     always_online=always_online,
                     appliance_type=appliance_type
@@ -467,6 +472,7 @@ def main():
     add_parser.add_argument("-p", "--port", type=int, default=22, help=t("node.cli_port", "SSH port (default: 22)"))
     add_parser.add_argument("-a", "--automation-user", default=get_ansible_user(), help=t("node.cli_auto_user", "Automation user to create (default: ansible)"))
     add_parser.add_argument("-k", "--key", default=None, help=t("node.cli_key", "Initial SSH private key path (leave empty for password)"))
+    add_parser.add_argument("-P", "--password", default=None, help=t("node.cli_password", "Initial SSH / Sudo password (optional)"))
     add_parser.add_argument("-c", "--category", choices=["dev", "server", "desktop", "appliance"], default=None, help=t("node.cli_category", "Specify node category"))
     add_parser.add_argument("--always-online", dest="always_online", action="store_true", default=None, help=t("node.cli_always_online", "Mark node as always online (24/7)"))
     add_parser.add_argument("--intermittent", dest="always_online", action="store_false", help=t("node.cli_intermittent", "Mark node as intermittent (Desktop/Laptop)"))
@@ -494,6 +500,7 @@ def main():
         run_node_onboarding(
             target, args.port, args.user, args.automation_user,
             key_file=args.key,
+            password=args.password,
             node_category=args.category,
             always_online=args.always_online,
             appliance_type=args.appliance_type
