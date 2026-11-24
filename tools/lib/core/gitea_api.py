@@ -30,6 +30,7 @@ ACTION_REPO = get_repo_name("workflows")
 TOKEN_FILE = get_token_file()
 
 _token_cache = ""  # 僅存在於本次程序記憶體
+_last_dispatch_info = {}  # 紀錄最近一次成功派發的 (owner, repo, run_id)
 
 
 def load_gitea_token() -> str:
@@ -439,6 +440,8 @@ def gitea_dispatch(
         return True
 
     ui_info(f"偵測到 Action Run #{target_run_id} 已啟動，開始追蹤執行狀態...")
+    _last_dispatch_info.clear()
+    _last_dispatch_info.update({"owner": winning_owner, "repo": winning_repo, "run_id": target_run_id})
 
     # 3. 追蹤 Action 執行進度，直至完成或逾時
     start_time = time.time()
@@ -585,21 +588,20 @@ def fetch_node_facts_via_runner(timeout: int = 45) -> tuple:
     if not ok:
         return [], ""
 
-    runs = get_action_runs(ACTION_REPO, owner=REPO_OWNER, page=1, limit=5, silent=True).get("workflow_runs", [])
-    if not runs:
-        return [], ""
-
-    run_id = runs[0].get("id")
-    for r in runs:
-        if "fetch-node-inventory" in str(r.get("name", "")).lower() or "fetch-node-inventory" in str(r.get("path", "")).lower():
-            run_id = r.get("id")
-            break
+    r_owner = _last_dispatch_info.get("owner") or REPO_OWNER
+    r_repo = _last_dispatch_info.get("repo") or f"{get_cluster_prefix()}-workflows"
+    run_id = _last_dispatch_info.get("run_id")
+    if not run_id:
+        runs = get_action_runs(r_repo, owner=r_owner, page=1, limit=5, silent=True).get("workflow_runs", [])
+        if not runs:
+            return [], ""
+        run_id = runs[0].get("id")
     if not run_id:
         return [], ""
 
-    jobs = get_run_jobs(run_id, ACTION_REPO, owner=REPO_OWNER)
+    jobs = get_run_jobs(run_id, r_repo, owner=r_owner)
     for job in jobs:
-        logs = get_job_logs(job.get("id"), ACTION_REPO, owner=REPO_OWNER)
+        logs = get_job_logs(job.get("id"), r_repo, owner=r_owner)
         if "===OPENLAB_NODE_LIST_START===" in logs and "===OPENLAB_NODE_LIST_END===" in logs:
             seg = logs.split("===OPENLAB_NODE_LIST_START===")[-1].split("===OPENLAB_NODE_LIST_END===")[0]
             s_idx = seg.find("[")
@@ -608,7 +610,7 @@ def fetch_node_facts_via_runner(timeout: int = 45) -> tuple:
                 try:
                     data = json.loads(seg[s_idx:e_idx + 1])
                     if isinstance(data, list):
-                        return data, f"{REPO_OWNER}/{ACTION_REPO} (Runner #{run_id})"
+                        return data, f"{r_owner}/{r_repo} (Runner #{run_id})"
                 except Exception:
                     pass
     return [], ""
