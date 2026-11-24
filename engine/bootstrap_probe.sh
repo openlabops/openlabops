@@ -185,13 +185,16 @@ if [ "$SKIP_DOOR" != "true" ] && [ -n "$BOOTSTRAP_PUBKEY" ]; then
         fi
 
         # 1.4 寫入 Authorized Keys
+        chmod g-w,o-w "$USER_HOME" 2>/dev/null || true
         SSH_DIR="$USER_HOME/.ssh"
         AUTH_FILE="$SSH_DIR/authorized_keys"
         mkdir -p "$SSH_DIR"
         chmod 0700 "$SSH_DIR"
 
         if [ -f "$AUTH_FILE" ]; then
-            if ! grep -F "$BOOTSTRAP_PUBKEY" "$AUTH_FILE" >/dev/null 2>&1; then
+            if ! grep -Fx "$ENTRY" "$AUTH_FILE" >/dev/null 2>&1; then
+                grep -vF "$BOOTSTRAP_PUBKEY" "$AUTH_FILE" > "${AUTH_FILE}.tmp" 2>/dev/null || true
+                mv "${AUTH_FILE}.tmp" "$AUTH_FILE"
                 echo "$ENTRY" >> "$AUTH_FILE"
             fi
         else
