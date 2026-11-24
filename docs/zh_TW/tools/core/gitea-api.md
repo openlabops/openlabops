@@ -59,6 +59,9 @@ Payload:
    ```bash
    lab-tools inspect-run <run_id>
    ```
+5. **Runner 代理節點事實回傳 (`fetch_remote_node_facts` + `fetch-node-inventory.yml`)**：
+   - 遵循 `[INV-03]` 爆破半徑隔離，`ci-bot` 僅具備 `*-workflows` 權限，不直接透過 API 讀取 `*-configs` / `*-operations`。
+   - 當端點工具（`lab-node list`、`lab-status`）需要集群節點清冊時，`fetch_remote_node_facts()` 會透過 `ci-bot` 派發 `fetch-node-inventory.yml`，由 Act Runner 內部檢出 `*-configs` 與 `*-operations`，將聚合後之 JSON 陣列輸出於 `===OPENLAB_NODE_LIST_START===` 與 `===OPENLAB_NODE_LIST_END===` 邊界內，再由 `get_job_logs()` 取回解析。
 
 ```python
 from core.gitea_api import gitea_dispatch, display_run_error_feedback
