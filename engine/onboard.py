@@ -1281,8 +1281,13 @@ def run_lab_node_tui(dialog=None):
                     dialog.msgbox("Decommission Notice", f"節點 [{rem_target}] 已除役（遠端金鑰可能未成功收回）。")
 
         elif choice == "list":
-            lines = [f"{'主機名稱':<12} {'主要 IP':<16} {'分類角色':<12} {'系統發行版'}"]
-            lines.append("-" * 64)
+            from engine.bsd_dialog import pad_to_width
+            col_w = (22, 17, 12, 22)
+            def _fmt_row(c1: str, c2: str, c3: str, c4: str) -> str:
+                return f"{pad_to_width(c1, col_w[0])} {pad_to_width(c2, col_w[1])} {pad_to_width(c3, col_w[2])} {pad_to_width(c4, col_w[3])}"
+
+            lines = [_fmt_row("主機名稱", "主要 IP", "分類角色", "系統發行版")]
+            lines.append("-" * (sum(col_w) + 3))
             nodes_map = {}
             source_label = ""
             is_online = False
@@ -1307,10 +1312,10 @@ def run_lab_node_tui(dialog=None):
                     ip = d.get("primary_ip", "")
                     cat = d.get("node_category", "server")
                     os_name = f"{d.get('distribution', d.get('os_family', ''))}"
-                    lines.append(f"{h:<12} {ip:<16} {cat:<12} {os_name}")
-                src_info = f" (來源: {source_label})" if source_label else ""
-                lines.insert(0, f"全網已納管節點總數: {len(nodes_map)} 台{src_info}\n")
-            dialog.msgbox("Managed Nodes Ground Truth", "\n".join(lines), width=76, height=22)
+                    lines.append(_fmt_row(h, ip, cat, os_name))
+                src_info = f" | 來源: {source_label}" if source_label else ""
+                lines.insert(0, f"全網已納管節點: {len(nodes_map)} 台{src_info}\n")
+            dialog.msgbox("Managed Nodes Ground Truth", "\n".join(lines), width=84, height=22)
 
         elif choice == "classify":
             def _do_clf(log_fn):
