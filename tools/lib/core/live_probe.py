@@ -80,10 +80,22 @@ try:
         upg_count = len(lines)
         upg_samples = lines[:3]
     elif os.path.exists("/usr/bin/tdnf"):
-        res = subprocess.run("sudo tdnf check-update 2>/dev/null", shell=True, capture_output=True, text=True)
-        lines = [l.split()[0] for l in res.stdout.strip().split("\n") if l.strip() and not l.startswith("Loading") and not l.startswith("Refreshing")]
-        upg_count = len(lines)
-        upg_samples = lines[:3]
+        dry = subprocess.run("sudo -n tdnf update --assumeno 2>/dev/null", shell=True, capture_output=True, text=True)
+        if dry.returncode == 0 and "Nothing to do." in dry.stdout:
+            upg_count = 0
+            upg_samples = []
+        else:
+            res = subprocess.run("sudo -n tdnf check-update 2>/dev/null || tdnf check-update 2>/dev/null", shell=True, capture_output=True, text=True)
+            lines = []
+            for raw_l in res.stdout.replace("\r", "\n").splitlines():
+                s = raw_l.strip()
+                if not s or s.startswith(("Loading", "Refreshing", "waiting", "%s", "photon-")):
+                    continue
+                tok = s.split()[0]
+                if "." in tok and not tok[0].isdigit():
+                    lines.append(tok)
+            upg_count = len(lines)
+            upg_samples = lines[:3]
     elif os.path.exists("/usr/bin/dnf"):
         res = subprocess.run("sudo dnf check-update 2>/dev/null", shell=True, capture_output=True, text=True)
         lines = [l.split()[0] for l in res.stdout.strip().split("\n") if any(l.endswith(arch) for arch in [".aarch64", ".noarch", ".x86_64", "ol10_appstream", "ol10_baseos_latest"])]
@@ -214,11 +226,16 @@ elif [ -x /usr/bin/apt-get ]; then
     samples=$(echo "$out" | grep '^Inst ' | head -n 3 | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
     if [ -n "$samples" ]; then upg_samples="$samples"; fi
 elif [ -x /usr/bin/tdnf ]; then
-    out=$(tdnf check-update 2>/dev/null || true)
-    cnt=$(echo "$out" | grep -v -E '^Loading|^Refreshing|^$' | grep -c '^[a-zA-Z0-9]' || true)
-    upg_count=$cnt
-    samples=$(echo "$out" | grep -v -E '^Loading|^Refreshing|^$' | head -n 3 | awk '{print $1}' | tr '\n' ',' | sed 's/,$//')
-    if [ -n "$samples" ]; then upg_samples="$samples"; fi
+    dry=$(sudo -n tdnf update --assumeno 2>/dev/null || tdnf update --assumeno 2>/dev/null || true)
+    if echo "$dry" | grep -q "Nothing to do."; then
+        upg_count=0
+    else
+        out=$( (sudo -n tdnf check-update 2>/dev/null || tdnf check-update 2>/dev/null || true) | tr '\r' '\n' | sed 's/^[[:space:]]*//' | grep -v -E '^(Loading|Refreshing|waiting|%s|photon-|$)' | awk '{print $1}' | grep -E '\.(x86_64|aarch64|noarch)$' || true )
+        cnt=$(echo "$out" | grep -c '^[a-zA-Z0-9]' || true)
+        upg_count=$cnt
+        samples=$(echo "$out" | head -n 3 | tr '\n' ',' | sed 's/,$//')
+        if [ -n "$samples" ]; then upg_samples="$samples"; fi
+    fi
 elif [ -x /usr/bin/dnf ]; then
     out=$(dnf check-update 2>/dev/null || true)
     cnt=$(echo "$out" | grep -E '\.(aarch64|x86_64|noarch)' | wc -l || true)
