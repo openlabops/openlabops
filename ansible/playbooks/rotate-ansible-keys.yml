@@ -15,7 +15,7 @@
   vars:
     ansible_key_filename: "{{ (keys.ansible | regex_replace('\\.key$', '.pub')) if keys is defined and keys.ansible is defined else ('ansible.pub' if ansible_user != 'lab' else 'lab.pub') }}"
     new_pub_key_path: "{{ custom_pub_key_path | default('/tmp/ssh_rotation/' + ansible_key_filename) }}"
-    ansible_ssh_private_key_file: "{{ bootstrap_key | default(current_priv_key_path | default(omit)) }}"
+    ansible_ssh_private_key_file: "{{ bootstrap_key | default(current_priv_key_path | default(lookup('env', 'HOME') + '/.ssh/' + (ansible_key_filename | regex_replace('\\.pub$', '.key')))) }}"
   tasks:
     - name: 讀取新公鑰內容
       ansible.builtin.slurp:
