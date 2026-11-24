@@ -110,11 +110,15 @@ def save_current_snapshot(nodes: list):
 
 
 def list_nodes():
-    """顯示已納管節點清冊"""
+    """顯示已納管節點清冊 (嚴格自遠端 Gitea 聯邦倉庫即時讀取)"""
     ui_header(f"OpenLabOps 已納管節點清單 (lab-node list v{get_local_version()})")
-    nodes = get_current_snapshot()
+    from core.gitea_api import fetch_remote_node_facts
+    nodes, source_label, is_online = fetch_remote_node_facts()
+    if not is_online:
+        ui_error("離線狀態：無法連線至 Gitea 聯邦倉庫取得節點事實。")
+        return
     if not nodes:
-        ui_warn("目前尚未有任何節點快照紀錄。可執行 `lab-node add <IP>` 進行納管。")
+        ui_warn("遠端聯邦倉庫目前尚未有任何節點事實紀錄。可執行 `lab-node add <IP>` 進行納管。")
         return
 
     print(f"{'主機名稱':<12} {'主要 IP':<16} {'節點類別':<14} {'作業系統/韌體':<22} {'核心/記憶體':<14} {'Docker 容器':<10}")
@@ -140,7 +144,8 @@ def list_nodes():
         docker_str = "● 支援" if caps.get("has_docker") else "○ 無"
         print(f"{h:<12} {ip:<16} {cat_str:<14} {os_name[:20]:<22} {f'{cores}C / {mem_str}':<14} {docker_str:<10}")
     print("-" * 90)
-    ui_info(f"總計已納管節點: {len(nodes)} 台")
+    src_info = f" (來源: {source_label})" if source_label else ""
+    ui_info(f"總計已納管節點: {len(nodes)} 台{src_info}")
 
 
 def load_bootstrap_pubkey(automation_user: str = None) -> str:
