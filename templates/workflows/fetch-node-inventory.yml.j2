@@ -61,6 +61,25 @@ jobs:
                   except Exception:
                       pass
 
+          hosts_yml = Path("/tmp/{{ git_platform.repo_prefix }}-operations/ansible/inventory/hosts.yml")
+          if hosts_yml.exists():
+              cur_group, cur_host = "", ""
+              for line in hosts_yml.read_text(encoding="utf-8").splitlines():
+                  s = line.strip()
+                  if not s or s.startswith("#"):
+                      continue
+                  indent = len(line) - len(line.lstrip())
+                  if indent == 4 and s.endswith(":"):
+                      cur_group = s[:-1]
+                  elif indent == 6 and s.endswith(":") and s[:-1] != "hosts":
+                      cur_host = s[:-1]
+                      if cur_host not in nodes:
+                          nodes[cur_host] = {"hostname": cur_host, "primary_ip": "", "node_category": "server", "os_family": cur_group}
+                  elif indent == 8 and cur_host and s.startswith("ansible_host:"):
+                      ip_val = s.split(":", 1)[1].strip().strip("'\"")
+                      if cur_host in nodes and not nodes[cur_host].get("primary_ip"):
+                          nodes[cur_host]["primary_ip"] = ip_val
+
           print("===OPENLAB_NODE_LIST_START===")
           print(json.dumps(list(nodes.values()), ensure_ascii=False))
           print("===OPENLAB_NODE_LIST_END===")

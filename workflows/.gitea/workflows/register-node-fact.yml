@@ -76,6 +76,9 @@ jobs:
                       f.parent.mkdir(parents=True, exist_ok=True)
                       f.write_text(formatted, encoding="utf-8")
           PY
+          if [ -f "/tmp/openlab-operations/engine/classifier.py" ]; then
+            python3 "/tmp/openlab-operations/engine/classifier.py" --apply || true
+          fi
 
       - name: 推送至 Configs 倉庫
         uses: ./.gitea/actions/git-sync-commit
