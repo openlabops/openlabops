@@ -105,8 +105,25 @@ def update_tools_from_gitea(force: bool = False, check_only: bool = False) -> bo
         tar_path = os.path.join(tmp_dir, "tools.tar.gz")
         downloaded = False
         last_err = None
-        for repo_candidate in ("openlab-operations", "openlabops", "openlab-tools"):
-            archive_url = f"{GITEA_URL}/api/v1/repos/{REPO_OWNER}/{repo_candidate}/archive/main.tar.gz"
+        from core.config import get_git_origin_info, get_repo_name
+        origin_owner, origin_repo = get_git_origin_info()
+        ops_repo = get_repo_name("operations")
+        repo_candidates = []
+        if ops_repo:
+            repo_candidates.append((REPO_OWNER, ops_repo, "main"))
+        if origin_owner and origin_repo:
+            repo_candidates.append((origin_owner, origin_repo, "master"))
+            repo_candidates.append((origin_owner, origin_repo, "main"))
+        for r in ("openlab-operations", "openlabops", "openlab-tools"):
+            repo_candidates.append((REPO_OWNER, r, "main"))
+            repo_candidates.append((REPO_OWNER, r, "master"))
+
+        seen_urls = set()
+        for owner_cand, repo_cand, branch_cand in repo_candidates:
+            archive_url = f"{GITEA_URL}/api/v1/repos/{owner_cand}/{repo_cand}/archive/{branch_cand}.tar.gz"
+            if archive_url in seen_urls:
+                continue
+            seen_urls.add(archive_url)
             ui_info(f"正在從 Gitea 下載最新工具代碼: {archive_url}")
             try:
                 req = urllib.request.Request(archive_url, headers=headers)
@@ -139,6 +156,8 @@ def update_tools_from_gitea(force: bool = False, check_only: bool = False) -> bo
                 dirs = [d for d in os.listdir(tmp_dir) if os.path.isdir(os.path.join(tmp_dir, d))]
                 if dirs:
                     extracted_root = os.path.join(tmp_dir, dirs[0])
+            if extracted_root and os.path.exists(os.path.join(extracted_root, "tools", "lib")):
+                extracted_root = os.path.join(extracted_root, "tools")
 
             install_extracted(extracted_root)
             return True

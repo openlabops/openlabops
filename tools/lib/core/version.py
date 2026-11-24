@@ -49,17 +49,33 @@ def get_remote_version() -> str:
     if token:
         headers["Authorization"] = f"token {token}"
 
-    for repo_name in ("openlab-operations", "openlabops"):
-        raw_url = f"{GITEA_URL}/api/v1/repos/{REPO_OWNER}/{repo_name}/raw/VERSION"
-        try:
-            req = urllib.request.Request(raw_url, headers=headers)
-            with urllib.request.urlopen(req, timeout=3) as resp:
-                if resp.status == 200:
-                    ver = resp.read().decode("utf-8").strip()
-                    if ver:
-                        return ver
-        except Exception:
-            pass
+    from core.config import get_git_origin_info, get_repo_name
+    origin_owner, origin_repo = get_git_origin_info()
+    ops_repo = get_repo_name("operations")
+    candidates = []
+    if ops_repo:
+        candidates.append((REPO_OWNER, ops_repo))
+    if origin_owner and origin_repo:
+        candidates.append((origin_owner, origin_repo))
+    for r in ("openlab-operations", "openlabops"):
+        candidates.append((REPO_OWNER, r))
+
+    seen = set()
+    for owner, repo_name in candidates:
+        if (owner, repo_name) in seen:
+            continue
+        seen.add((owner, repo_name))
+        for path_cand in ("VERSION", "tools/VERSION"):
+            raw_url = f"{GITEA_URL}/api/v1/repos/{owner}/{repo_name}/raw/{path_cand}"
+            try:
+                req = urllib.request.Request(raw_url, headers=headers)
+                with urllib.request.urlopen(req, timeout=3) as resp:
+                    if resp.status == 200:
+                        ver = resp.read().decode("utf-8").strip()
+                        if ver:
+                            return ver
+            except Exception:
+                pass
     return ""
 
 
