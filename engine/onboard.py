@@ -131,6 +131,7 @@ C_YELLOW = "\033[33m"
 C_RED = "\033[31m"
 C_CYAN = "\033[36m"
 C_MAGENTA = "\033[35m"
+C_DIM = "\033[2m"
 
 def execute_pty_ssh(host, user="labadmin", port=22, password=None, key_file=None, command=None, input_stream=None, timeout=30, prompt_callback=None):
     """
