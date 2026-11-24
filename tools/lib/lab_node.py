@@ -27,7 +27,7 @@ LIB_DIR = os.path.abspath(os.path.dirname(os.path.realpath(__file__)))
 if LIB_DIR not in sys.path:
     sys.path.insert(0, LIB_DIR)
 
-from core.ui_theme import ui_header, ui_kv, ui_divider, ui_info, ui_success, ui_warn, ui_error
+from core.ui_theme import ui_header, ui_kv, ui_divider, ui_info, ui_success, ui_warn, ui_error, pad_cjk, truncate_cjk
 from core.ui_menu import ui_select, ui_confirm, ui_form, select_target_hosts
 from core.config import get_admin_user, get_ansible_user, get_cluster_targets, get_manifest_path, is_openlab
 from core.version import get_local_version
@@ -123,29 +123,58 @@ def list_nodes():
         ui_warn("遠端聯邦倉庫目前尚未有任何節點事實紀錄。可執行 `lab-node add <IP>` 進行納管。")
         return
 
-    print(f"{'主機名稱':<12} {'主要 IP':<16} {'節點類別':<14} {'作業系統/韌體':<22} {'核心/記憶體':<14} {'Docker 容器':<10}")
-    print("-" * 90)
+    w_host = max(14, min(26, max((len(str(n.get("hostname", ""))) for n in nodes), default=12) + 1))
+    w_ip = 17
+    w_cat = 15
+    w_os = 22
+    w_hw = 13
+    w_doc = 11
+    total_w = w_host + w_ip + w_cat + w_os + w_hw + w_doc + 5
+
+    header = " ".join([
+        pad_cjk("主機名稱", w_host),
+        pad_cjk("主要 IP", w_ip),
+        pad_cjk("節點類別", w_cat),
+        pad_cjk("作業系統/韌體", w_os),
+        pad_cjk("核心/記憶體", w_hw),
+        pad_cjk("Docker 容器", w_doc),
+    ])
+    print(f"  \033[1m{header}\033[0m")
+    print(f"  \033[2m{'─' * total_w}\033[0m")
     for n in nodes:
-        h = n.get("hostname", "unknown")
-        ip = n.get("primary_ip", "unknown")
+        h = str(n.get("hostname", "unknown"))
+        ip = str(n.get("primary_ip", "unknown"))
         cat = n.get("node_category", "server")
         if cat == "hypervisor":
             cat_str = "🖥️ Hypervisor"
         elif cat == "appliance":
             cat_str = "📦 Appliance"
-        elif cat == "endpoint":
-            cat_str = "💻 Endpoint"
+        elif cat == "storage":
+            cat_str = "💾 Storage"
+        elif cat in ("endpoint", "desktop"):
+            cat_str = "💻 Desktop"
+        elif cat == "dev":
+            cat_str = "🛠️ Dev"
         else:
             cat_str = "🌐 Server"
-        os_name = n.get("distribution", n.get("os_family", "Linux"))
+        os_name = str(n.get("distribution", n.get("os_family", "Linux")))
         hw = n.get("hardware", {})
         cores = hw.get("cpu_cores", "-")
         mem = hw.get("memory_mb", 0)
         mem_str = f"{round(mem/1024, 1)}G" if mem else "-"
+        hw_str = f"{cores}C / {mem_str}"
         caps = n.get("capabilities", {})
-        docker_str = "● 支援" if caps.get("has_docker") else "○ 無"
-        print(f"{h:<12} {ip:<16} {cat_str:<14} {os_name[:20]:<22} {f'{cores}C / {mem_str}':<14} {docker_str:<10}")
-    print("-" * 90)
+        docker_str = "\033[32m● 支援\033[0m" if caps.get("has_docker") else "\033[2m○ 無\033[0m"
+        row = " ".join([
+            pad_cjk(truncate_cjk(h, w_host), w_host),
+            pad_cjk(truncate_cjk(ip, w_ip), w_ip),
+            pad_cjk(truncate_cjk(cat_str, w_cat), w_cat),
+            pad_cjk(truncate_cjk(os_name, w_os), w_os),
+            pad_cjk(truncate_cjk(hw_str, w_hw), w_hw),
+            pad_cjk(docker_str, w_doc),
+        ])
+        print(f"  {row}")
+    print(f"  \033[2m{'─' * total_w}\033[0m")
     src_info = f" (來源: {source_label})" if source_label else ""
     ui_info(f"總計已納管節點: {len(nodes)} 台{src_info}")
 
