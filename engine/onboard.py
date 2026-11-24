@@ -1210,9 +1210,10 @@ def run_lab_node_tui(dialog=None):
                                 return r.returncode == 0
                             dialog.progress_box("Compiling Inventory", "classifier.py", _do_clf, width=76, height=20)
 
-                        # 透過 ci-bot 派發 deploy-ssh-keys.yml，由 Runner 自 *-secrets 部署正式公鑰至新節點
+                        # 透過 ci-bot 派發 register-node-fact.yml + deploy-ssh-keys.yml 至聯邦倉庫
                         try:
-                            from tools.lib.core.gitea_api import gitea_dispatch
+                            from tools.lib.core.gitea_api import gitea_dispatch, register_node_fact_via_runner
+                            register_node_fact_via_runner(hname, facts, action="upsert", wait=True)
                             gitea_dispatch(
                                 "deploy-ssh-keys.yml",
                                 payload={

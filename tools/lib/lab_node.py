@@ -270,9 +270,11 @@ def run_node_onboarding(
         else:
             ui_warn(f"分類引擎警示: {res.stderr}")
 
-    # 5. 透過 ci-bot 派發 deploy-ssh-keys.yml，由 Runner 自 *-secrets 部署正式公鑰
+    # 5. 透過 ci-bot 派發 register-node-fact.yml 與 deploy-ssh-keys.yml 至聯邦倉庫
     try:
-        from core.gitea_api import gitea_dispatch
+        from core.gitea_api import gitea_dispatch, register_node_fact_via_runner
+        ui_info(f"正在派發 register-node-fact.yml，由 Runner 將 [{hname}] 註冊至聯邦倉庫...")
+        register_node_fact_via_runner(hname, clean_fact, action="upsert", wait=True)
         ui_info(f"正在派發 deploy-ssh-keys.yml，由 Runner 自 *-secrets 部署正式公鑰至 [{hname}]...")
         gitea_dispatch(
             "deploy-ssh-keys.yml",

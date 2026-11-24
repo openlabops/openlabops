@@ -616,3 +616,25 @@ def fetch_node_facts_via_runner(timeout: int = 45) -> tuple:
     return [], ""
 
 
+def register_node_fact_via_runner(hostname: str, node_facts: dict = None, action: str = "upsert", wait: bool = True) -> bool:
+    """
+    透過 ci-bot 派發 register-node-fact.yml，由 Gitea Act Runner 將節點事實寫入或移除出 *-configs / *-operations。
+    """
+    import base64
+    b64_payload = ""
+    if action != "remove" and isinstance(node_facts, dict):
+        b64_payload = base64.b64encode(json.dumps(node_facts, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    return gitea_dispatch(
+        "register-node-fact.yml",
+        payload={
+            "ref": "main",
+            "inputs": {
+                "action": action,
+                "hostname": str(hostname),
+                "node_json_b64": b64_payload,
+            },
+        },
+        wait=wait,
+    )
+
+
