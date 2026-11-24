@@ -455,7 +455,7 @@ def main():
             if is_bsd_tui_supported():
                 run_lab_node_tui()
                 return
-        except Exception:
+        except ImportError:
             pass
 
     # 兼容母體 engine/onboard.py 旗標 (--manifest, --host, --remove, --classify, --non-interactive, --onboard)

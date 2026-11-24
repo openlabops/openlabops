@@ -193,6 +193,7 @@ def execute_pty_ssh(host, user="labadmin", port=22, password=None, key_file=None
     output_chunks = []
     sent_ssh_password = False
     sent_sudo_password = False
+    sent_passphrase = False
     sent_stream = False
     start_time = time.time()
 
@@ -221,7 +222,23 @@ def execute_pty_ssh(host, user="labadmin", port=22, password=None, key_file=None
                     if pw:
                         time.sleep(0.05)
                         os.write(master, pw.encode("utf-8") + b"\n")
+                        sent_passphrase = True
                         continue
+                elif not sent_passphrase and password:
+                    time.sleep(0.05)
+                    os.write(master, password.encode("utf-8") + b"\n")
+                    sent_passphrase = True
+                    continue
+                elif sys.stdin.isatty():
+                    try:
+                        pw = getpass.getpass(f"\n節點 [{host}] SSH 私鑰需要 Passphrase 解鎖: ")
+                        if pw:
+                            time.sleep(0.05)
+                            os.write(master, pw.encode("utf-8") + b"\n")
+                            sent_passphrase = True
+                            continue
+                    except (KeyboardInterrupt, EOFError):
+                        pass
                 output_chunks.append("\n[ERROR: KEY_PASSPHRASE_REQUIRED] SSH 私鑰設有 Passphrase 保護，請改用無密碼私鑰或先將金鑰載入 ssh-agent。\n")
                 try:
                     os.write(master, b"\n")
@@ -527,6 +544,7 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
             node_facts = json.loads(json_str, strict=False)
         except Exception as e:
             emit(f"{C_RED}[✗] JSON Parsing Failed: {e}{C_RESET}")
+            emit(f"{C_DIM}    JSON Snippet: {repr(json_str[:180])}{C_RESET}")
             return False, f"JSON 解析失敗: {e}"
 
         hname = _sanitize_hostname(node_facts.get("hostname", host), fallback=_sanitize_hostname(str(host)))
