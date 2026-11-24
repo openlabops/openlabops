@@ -29,6 +29,15 @@ runs:
           "~"*) DEST_DIR="${HOME}${DEST_DIR#\~}" ;;
         esac
 
+        if [ ! -d "$SECRETS_DIR" ]; then
+          for cand in /tmp/*-secrets; do
+            if [ -d "$cand/ssh-key" ]; then
+              SECRETS_DIR="$cand"
+              break
+            fi
+          done
+        fi
+
         SRC_KEY="${SECRETS_DIR}/ssh-key/${KEY_NAME}"
         TARGET_KEY="${DEST_DIR}/${KEY_NAME}"
 

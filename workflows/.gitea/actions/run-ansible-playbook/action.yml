@@ -44,6 +44,15 @@ runs:
         SKIP_TAGS: ${{ inputs.skip_tags }}
       run: |
 
+        if [ ! -d "$WORK_DIR" ]; then
+          for cand in /tmp/*-operations/ansible /tmp/*-ansible; do
+            if [ -d "$cand" ] && [ -e "$cand/$PLAYBOOK" ]; then
+              WORK_DIR="$cand"
+              break
+            fi
+          done
+        fi
+
         cd "$WORK_DIR"
         export ANSIBLE_HOST_KEY_CHECKING="False"
 
