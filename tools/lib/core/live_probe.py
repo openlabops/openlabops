@@ -80,7 +80,7 @@ try:
         upg_count = len(lines)
         upg_samples = lines[:3]
     elif os.path.exists("/usr/bin/tdnf"):
-        dry = subprocess.run("sudo -n tdnf update --assumeno 2>/dev/null", shell=True, capture_output=True, text=True)
+        dry = subprocess.run("sudo -n tdnf update --assumeno 2>&1", shell=True, capture_output=True, text=True)
         if dry.returncode == 0 and "Nothing to do." in dry.stdout:
             upg_count = 0
             upg_samples = []
@@ -226,7 +226,7 @@ elif [ -x /usr/bin/apt-get ]; then
     samples=$(echo "$out" | grep '^Inst ' | head -n 3 | awk '{print $2}' | tr '\n' ',' | sed 's/,$//')
     if [ -n "$samples" ]; then upg_samples="$samples"; fi
 elif [ -x /usr/bin/tdnf ]; then
-    dry=$(sudo -n tdnf update --assumeno 2>/dev/null || tdnf update --assumeno 2>/dev/null || true)
+    dry=$(sudo -n tdnf update --assumeno 2>&1 || tdnf update --assumeno 2>&1 || true)
     if echo "$dry" | grep -q "Nothing to do."; then
         upg_count=0
     else
