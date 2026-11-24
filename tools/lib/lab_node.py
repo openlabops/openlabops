@@ -311,9 +311,9 @@ def _build_node_fact_from_target(target: dict) -> dict | None:
 def sync_nodes_to_federation(dry_run: bool = False, emit=None) -> bool:
     """比對本機節點設定與遠端 Gitea 聯邦倉庫，將本機有但遠端缺少的節點自動推送註冊，並重新編譯快照"""
     log = emit or print
-    from core.gitea_api import fetch_remote_node_facts, register_node_fact_via_runner
+    from core.gitea_api import sync_remote_node_cache_if_needed, register_node_fact_via_runner
 
-    # 1. 收集本機節點資料 (優先 conf/nodes/*.json，並補齊 tools.config.json / manifest 目標)
+    # 1. 收集本機節點資料 (優先 conf/nodes/*.json，並補齊 tools.config.json / manifest 靜態目標，不觸發遠端快取)
     local_by_key = {}
     for n in get_current_snapshot():
         h = str(n.get("hostname", "")).strip()
@@ -321,7 +321,7 @@ def sync_nodes_to_federation(dry_run: bool = False, emit=None) -> bool:
             local_by_key[h.split(".")[0].lower()] = n
 
     unresolved = []
-    for tgt in get_cluster_targets():
+    for tgt in get_cluster_targets(include_remote_cache=False):
         h = str(tgt.get("name", "")).strip()
         if not h:
             continue
@@ -333,10 +333,10 @@ def sync_nodes_to_federation(dry_run: bool = False, emit=None) -> bool:
             else:
                 unresolved.append(h)
 
-    # 2. 取得遠端聯邦倉庫事實
-    remote_nodes, source_label, is_online = fetch_remote_node_facts()
+    # 2. 取得遠端聯邦倉庫事實 (透過快取比對，避免重複派發 Runner)
+    remote_nodes, source_label, is_online = sync_remote_node_cache_if_needed()
     if not is_online:
-        log("[!] 離線狀態：無法連線至 Gitea 聯邦倉庫進行同步。")
+        log("[!] 無法取得遠端節點清冊（Gitea 離線或 Runner 逾時），已中止同步以避免誤判。")
         return False
 
     remote_keys = set()

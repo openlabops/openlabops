@@ -575,20 +575,21 @@ def fetch_remote_node_facts() -> tuple:
 
     if not nodes_by_host:
         runner_nodes, runner_src = fetch_node_facts_via_runner()
-        if runner_nodes:
-            return runner_nodes, runner_src, is_online
+        if runner_nodes is None:
+            return [], "runner-timeout", False
+        return runner_nodes, runner_src, is_online
 
     return list(nodes_by_host.values()), ", ".join(sources), is_online
 
 
-def fetch_node_facts_via_runner(timeout: int = 45) -> tuple:
+def fetch_node_facts_via_runner(timeout: int = 90) -> tuple:
     """
     透過 ci-bot 派發 fetch-node-inventory.yml，由 Gitea Act Runner 檢出 configs/operations
     並自 Job Log 邊界標記擷取最新節點事實 JSON 陣列（維持 ci-bot RBAC 隔離）。
     """
     ok = gitea_dispatch("fetch-node-inventory.yml", payload={"ref": "main"}, wait=True, timeout=timeout)
     if not ok:
-        return [], ""
+        return None, ""
 
     r_owner = _last_dispatch_info.get("owner") or REPO_OWNER
     r_repo = _last_dispatch_info.get("repo") or f"{get_cluster_prefix()}-workflows"
@@ -602,6 +603,8 @@ def fetch_node_facts_via_runner(timeout: int = 45) -> tuple:
         return [], ""
 
     jobs = get_run_jobs(run_id, r_repo, owner=r_owner)
+    if not jobs:
+        return None, ""
     for job in jobs:
         logs = get_job_logs(job.get("id"), r_repo, owner=r_owner)
         if "===OPENLAB_NODE_LIST_START===" in logs and "===OPENLAB_NODE_LIST_END===" in logs:
@@ -615,7 +618,7 @@ def fetch_node_facts_via_runner(timeout: int = 45) -> tuple:
                         return data, f"{r_owner}/{r_repo} (Runner #{run_id})"
                 except Exception:
                     pass
-    return [], ""
+    return None, ""
 
 
 def register_node_fact_via_runner(hostname: str, node_facts: dict = None, action: str = "upsert", wait: bool = True) -> bool:

@@ -409,7 +409,7 @@ def _resolve_target_key_path(login_user: str) -> str:
     return f"~/.ssh/{key_name}"
 
 
-def get_cluster_targets() -> list:
+def get_cluster_targets(include_remote_cache: bool = True) -> list:
     static_targets = load_config().get("cluster_targets", [])
     if not static_targets:
         manifest_path = get_manifest_path()
@@ -464,7 +464,7 @@ def get_cluster_targets() -> list:
                 pass
 
     # 若無單獨節點事實檔，比對遠端與本機快取 (一樣不重抓，不一樣自動同步)
-    if not node_items:
+    if not node_items and include_remote_cache:
         try:
             from core.gitea_api import sync_remote_node_cache_if_needed
             synced_nodes, _, _ = sync_remote_node_cache_if_needed()
