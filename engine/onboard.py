@@ -446,23 +446,13 @@ def onboard_node(host, user=None, port=22, password=None, key_file=None, target_
     cleanup_ephemeral = (ephemeral_pubkey is None)
 
     try:
-        # 1. 檢查金鑰：Day-0 若有傳入 ephemeral_pubkey，一律優先使用臨時引導金鑰開門，再由 Step 5 輪替為正式金鑰
-        #    僅在 Day-2 單機納管 (ephemeral_pubkey is None) 時，才直接採用管理機既有的正式金鑰 (~/.ssh/<target_user>.key)
-        mgmt_pub = Path.home() / ".ssh" / f"{target_user}.pub"
-        mgmt_key = Path.home() / ".ssh" / f"{target_user}.key"
+        # 1. 一律採用臨時安全引導金鑰開門與 Handover 驗證，不依賴本機 ~/.ssh/<target_user>.key (正式公鑰由 Runner 自 *-secrets 部署)
         temp_key = temp_dir / "id_ed25519"
         temp_pub = temp_dir / "id_ed25519.pub"
 
         if ephemeral_pubkey:
             pubkey = ephemeral_pubkey.strip()
             priv_key = temp_key
-        elif mgmt_pub.exists() and mgmt_key.exists():
-            derived_res = subprocess.run(["ssh-keygen", "-y", "-P", "", "-f", str(mgmt_key)], capture_output=True, text=True)
-            if derived_res.returncode == 0 and derived_res.stdout.strip():
-                pubkey = derived_res.stdout.strip()
-            else:
-                pubkey = mgmt_pub.read_text(encoding="utf-8").strip()
-            priv_key = mgmt_key
         else:
             temp_dir.mkdir(parents=True, mode=0o700, exist_ok=True)
             if not temp_key.exists():
@@ -1220,7 +1210,26 @@ def run_lab_node_tui(dialog=None):
                                 return r.returncode == 0
                             dialog.progress_box("Compiling Inventory", "classifier.py", _do_clf, width=76, height=20)
 
-                        dialog.msgbox("Onboarding Complete", f"節點 [{hname}] 已成功納管並完成集群配置！")
+                        # 透過 ci-bot 派發 deploy-ssh-keys.yml，由 Runner 自 *-secrets 部署正式公鑰至新節點
+                        try:
+                            from tools.lib.core.gitea_api import gitea_dispatch
+                            gitea_dispatch(
+                                "deploy-ssh-keys.yml",
+                                payload={
+                                    "ref": "main",
+                                    "inputs": {
+                                        "target_hosts": hname,
+                                        "target_user": target_node.get("target_user", "lab"),
+                                        "deploy_authorized_keys": "true",
+                                        "deploy_client_keys": "false",
+                                    },
+                                },
+                                wait=False,
+                            )
+                        except Exception:
+                            pass
+
+                        dialog.msgbox("Onboarding Complete", f"節點 [{hname}] 已成功納管並完成集群配置（已派發 *-secrets 公鑰同步）！")
                     break
                 else:
                     fail_err = str(onboard_res[1] or "連線或提權逾時失敗")

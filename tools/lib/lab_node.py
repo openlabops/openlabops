@@ -188,11 +188,7 @@ def run_node_onboarding(
     if always_online is not None:
         ui_kv("常態在線 (7/24)", "是" if always_online else "否")
 
-    pubkey = load_bootstrap_pubkey(automation_user)
-    if not pubkey:
-        ui_error(f"找不到可用之開門公鑰 (~/.ssh/{automation_user}.pub)！請先確保本機具備公鑰。")
-        return False
-    ui_kv("開門公鑰特徵", pubkey[:35] + "..." + pubkey[-15:])
+    ui_kv("引導金鑰模式", "臨時安全金鑰 (完成後由 Runner 自 *-secrets 部署正式公鑰)")
     ui_divider()
 
     if not PROBE_SCRIPT.exists():
@@ -273,6 +269,26 @@ def run_node_onboarding(
             ui_success("inventory/hosts.yml 與 current.json 已自動更新！")
         else:
             ui_warn(f"分類引擎警示: {res.stderr}")
+
+    # 5. 透過 ci-bot 派發 deploy-ssh-keys.yml，由 Runner 自 *-secrets 部署正式公鑰
+    try:
+        from core.gitea_api import gitea_dispatch
+        ui_info(f"正在派發 deploy-ssh-keys.yml，由 Runner 自 *-secrets 部署正式公鑰至 [{hname}]...")
+        gitea_dispatch(
+            "deploy-ssh-keys.yml",
+            payload={
+                "ref": "main",
+                "inputs": {
+                    "target_hosts": hname,
+                    "target_user": automation_user,
+                    "deploy_authorized_keys": "true",
+                    "deploy_client_keys": "false",
+                },
+            },
+            wait=True,
+        )
+    except Exception:
+        pass
 
     cat = node_fact.get("node_category", "server")
     is_imm = node_fact.get("is_immutable", False)
