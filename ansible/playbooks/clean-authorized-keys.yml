@@ -7,7 +7,7 @@
 #     --extra-vars "target_hosts=all dry_run=true"
 # ==============================================================================
 - name: "探測機密庫白名單公鑰並整理受控端 authorized_keys (Standard Nodes)"
-  hosts: "{{ target_hosts | default('all') }}:!appliances"
+  hosts: "{{ (target_hosts | default('all')).split(',') | map('regex_replace', '$', ':!appliances:!storage:!hypervisors') | join(',') }}"
   gather_facts: true
   become: true
 
@@ -140,7 +140,7 @@
                         reason = "duplicate" if blob in seen else "unauthorized/stale"
                         removed.append(f"{reason}: {s[:72]}")
                 if removed:
-                    if not dry_run and seen:
+                    if not dry_run:
                         with open(root_auth, "w", encoding="utf-8") as f:
                             f.writelines(kept)
                         os.chmod(root_auth, 0o600)
@@ -192,7 +192,7 @@
         msg: "[{{ inventory_hostname }}] {{ clean_result.stdout | default('skipped') }} || {{ stale_files_result.stdout | default('dev-node-kept') }}"
 
 - name: "稽核並清理 Storage authorized_keys (/cf/conf/authorized_keys)"
-  hosts: "{{ target_hosts | default('all') }}:&storage"
+  hosts: "{{ (target_hosts | default('all')).split(',') | map('regex_replace', '$', ':&storage') | join(',') }}"
   gather_facts: false
 
   vars:
@@ -217,6 +217,19 @@
         xnas_sec_dir: "{{ (xnas_sec_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
       run_once: true
 
+    - name: 確保 Storage 連線私鑰權限為 0600 並載入
+      ansible.builtin.file:
+        path: "{{ xnas_sec_dir }}/ssh-key/{{ keys.user | default('id_user.key') }}"
+        mode: '0600'
+      delegate_to: localhost
+      run_once: true
+      when: xnas_sec_dir != ''
+
+    - name: 指定 Storage 連線私鑰路徑
+      ansible.builtin.set_fact:
+        ansible_ssh_private_key_file: "{{ xnas_sec_dir }}/ssh-key/{{ keys.user | default('id_user.key') }}"
+      when: xnas_sec_dir != ''
+
     - name: 讀取管理使用者公鑰內容
       ansible.builtin.slurp:
         src: "{{ xnas_sec_dir }}/ssh-key/{{ user_pub_name }}"
@@ -226,40 +239,14 @@
       when: xnas_sec_dir != ''
 
     - name: 檢查並清理 Storage authorized_keys
-      ansible.builtin.raw: |
-        sh -c '
-        ALLOW_BLOB="{{ (xnas_pub_b64.content | b64decode | trim).split() | select("match", "^AAAA") | first }}"
-        AUTH="/cf/conf/authorized_keys"
-        [ -f "$AUTH" ] || AUTH="/root/.ssh/authorized_keys"
-        [ -f "$AUTH" ] || { echo "no authorized_keys"; exit 0; }
-        TOTAL=$(grep -c "AAAA" "$AUTH" 2>/dev/null || echo 0)
-        MATCH=$(grep -c "$ALLOW_BLOB" "$AUTH" 2>/dev/null || echo 0)
-        if [ "$TOTAL" -le "$MATCH" ] && [ "$MATCH" -le 1 ]; then
-          echo "storage: clean ($MATCH valid key)"
-          exit 0
-        fi
-        if [ "{{ dry_run_mode | lower }}" = "true" ]; then
-          echo "storage: WOULD REMOVE $((TOTAL - (MATCH > 0 ? 1 : 0))) stale/duplicate key(s)"
-          exit 0
-        fi
-        [ "$MATCH" -ge 1 ] || { echo "storage: aborted (whitelist key missing in target)"; exit 1; }
-        mount -u -w /cf 2>/dev/null || true
-        grep -m 1 "$ALLOW_BLOB" "$AUTH" > "${AUTH}.tmp"
-        mv -f "${AUTH}.tmp" "$AUTH"
-        chmod 600 "$AUTH"
-        if [ "$AUTH" = "/cf/conf/authorized_keys" ]; then
-          cp -f /cf/conf/authorized_keys /root/.ssh/authorized_keys
-          chmod 600 /root/.ssh/authorized_keys
-        fi
-        mount -u -r /cf 2>/dev/null || true
-        echo "storage: REMOVED stale/duplicate keys"
-        '
+      ansible.builtin.raw: >-
+        sh -c 'ALLOW_BLOB="{{ (xnas_pub_b64.content | b64decode | trim).split() | select("match", "^AAAA") | first }}"; AUTH="/cf/conf/authorized_keys"; [ -f "$AUTH" ] || AUTH="/root/.ssh/authorized_keys"; [ -f "$AUTH" ] || { echo "no authorized_keys"; exit 0; }; TOTAL=$(grep -c "AAAA" "$AUTH" 2>/dev/null || echo 0); MATCH=$(grep -c "$ALLOW_BLOB" "$AUTH" 2>/dev/null || echo 0); if [ "$TOTAL" -le "$MATCH" ] && [ "$MATCH" -le 1 ]; then echo "storage: clean ($MATCH valid key)"; exit 0; fi; if [ "{{ dry_run_mode | lower }}" = "true" ]; then echo "storage: WOULD REMOVE stale/duplicate key(s) (total=$TOTAL match=$MATCH)"; exit 0; fi; [ "$MATCH" -ge 1 ] || { echo "storage: aborted (whitelist key missing in target)"; exit 1; }; mount -u -w /cf 2>/dev/null || true; grep -m 1 "$ALLOW_BLOB" "$AUTH" > "${AUTH}.tmp"; mv -f "${AUTH}.tmp" "$AUTH"; chmod 600 "$AUTH"; if [ "$AUTH" = "/cf/conf/authorized_keys" ]; then cp -f /cf/conf/authorized_keys /root/.ssh/authorized_keys; chmod 600 /root/.ssh/authorized_keys; fi; mount -u -r /cf 2>/dev/null || true; echo "storage: REMOVED stale/duplicate keys"'
       register: xnas_clean_res
       changed_when: "'REMOVED ' in xnas_clean_res.stdout"
       when: xnas_pub_b64 is defined and xnas_pub_b64.content is defined
 
 - name: "稽核並清理 Virtualization authorized_keys (/etc/ssh/keys-root/authorized_keys)"
-  hosts: "{{ target_hosts | default('all') }}:&hypervisors"
+  hosts: "{{ (target_hosts | default('all')).split(',') | map('regex_replace', '$', ':&hypervisors') | join(',') }}"
   gather_facts: false
 
   vars:
@@ -284,6 +271,19 @@
         kvm_sec_dir: "{{ (kvm_sec_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
       run_once: true
 
+    - name: 確保 Virtualization 連線私鑰權限為 0600 並載入
+      ansible.builtin.file:
+        path: "{{ kvm_sec_dir }}/ssh-key/{{ ssh_keys.kvm_appliance | default('ansible.key') }}"
+        mode: '0600'
+      delegate_to: localhost
+      run_once: true
+      when: kvm_sec_dir != ''
+
+    - name: 指定 Virtualization 連線私鑰路徑
+      ansible.builtin.set_fact:
+        ansible_ssh_private_key_file: "{{ kvm_sec_dir }}/ssh-key/{{ ssh_keys.kvm_appliance | default('ansible.key') }}"
+      when: kvm_sec_dir != ''
+
     - name: 讀取 Virtualization 公鑰內容
       ansible.builtin.slurp:
         src: "{{ kvm_sec_dir }}/ssh-key/{{ kvm_pub_name }}"
@@ -293,27 +293,8 @@
       when: kvm_sec_dir != ''
 
     - name: 檢查並清理 Virtualization authorized_keys
-      ansible.builtin.raw: |
-        sh -c '
-        ALLOW_BLOB="{{ (kvm_pub_b64.content | b64decode | trim).split() | select("match", "^AAAA") | first }}"
-        AUTH="/etc/ssh/keys-root/authorized_keys"
-        [ -f "$AUTH" ] || { echo "no kvm authorized_keys"; exit 0; }
-        TOTAL=$(grep -c "AAAA" "$AUTH" 2>/dev/null || echo 0)
-        MATCH=$(grep -c "$ALLOW_BLOB" "$AUTH" 2>/dev/null || echo 0)
-        if [ "$TOTAL" -le "$MATCH" ] && [ "$MATCH" -le 1 ]; then
-          echo "kvm: clean ($MATCH valid key)"
-          exit 0
-        fi
-        if [ "{{ dry_run_mode | lower }}" = "true" ]; then
-          echo "kvm: WOULD REMOVE stale/duplicate key(s)"
-          exit 0
-        fi
-        [ "$MATCH" -ge 1 ] || { echo "kvm: aborted (whitelist key missing in target)"; exit 1; }
-        grep -m 1 "$ALLOW_BLOB" "$AUTH" > "${AUTH}.tmp"
-        mv -f "${AUTH}.tmp" "$AUTH"
-        chmod 600 "$AUTH"
-        echo "kvm: REMOVED stale/duplicate keys"
-        '
+      ansible.builtin.raw: >-
+        sh -c 'ALLOW_BLOB="{{ (kvm_pub_b64.content | b64decode | trim).split() | select("match", "^AAAA") | first }}"; AUTH="/etc/ssh/keys-root/authorized_keys"; [ -f "$AUTH" ] || { echo "no kvm authorized_keys"; exit 0; }; TOTAL=$(grep -c "AAAA" "$AUTH" 2>/dev/null || echo 0); MATCH=$(grep -c "$ALLOW_BLOB" "$AUTH" 2>/dev/null || echo 0); if [ "$TOTAL" -le "$MATCH" ] && [ "$MATCH" -le 1 ]; then echo "kvm: clean ($MATCH valid key)"; exit 0; fi; if [ "{{ dry_run_mode | lower }}" = "true" ]; then echo "kvm: WOULD REMOVE stale/duplicate key(s) (total=$TOTAL match=$MATCH)"; exit 0; fi; [ "$MATCH" -ge 1 ] || { echo "kvm: aborted (whitelist key missing in target)"; exit 1; }; grep -m 1 "$ALLOW_BLOB" "$AUTH" > "${AUTH}.tmp"; mv -f "${AUTH}.tmp" "$AUTH"; chmod 600 "$AUTH"; echo "kvm: REMOVED stale/duplicate keys"'
       register: kvm_clean_res
       changed_when: "'REMOVED ' in kvm_clean_res.stdout"
       when: kvm_pub_b64 is defined and kvm_pub_b64.content is defined and (appliance_type | default('kvm')) == 'kvm'
