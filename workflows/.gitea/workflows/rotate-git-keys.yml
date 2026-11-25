@@ -87,32 +87,36 @@ jobs:
           echo "Testing GitHub SSH connection..."
           ssh -o StrictHostKeyChecking=accept-new -i /tmp/ssh_rotation/git.key -T git@github.com 2>&1 || true
 
-      - name: 透過 Gitea API 移除舊 SSH 公鑰
+      - name: 透過 Gitea API 移除舊與孤兒自動 SSH 公鑰
         env:
           BOT_TOKEN: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}
           GITEA_HOST: ${{ vars.GIT_HOST || 'gitea.lab' }}
         run: |
           KEYS_JSON=$(curl -s -X GET "http://${GITEA_HOST}/api/v1/user/keys" -H "Authorization: token ${BOT_TOKEN}")
-          OLD_KEY_ID=$(printf '%s' "${KEYS_JSON}" | python3 -c 'import json,os,sys; old=os.environ.get("OLD_PUB_KEY","").split(); blob=next((x for x in old if x.startswith("AAAA")),""); print(next((str(i["id"]) for i in (json.load(sys.stdin) or []) if isinstance(i,dict) and blob and blob in str(i.get("key",""))),""))')
-          if [ -n "${OLD_KEY_ID}" ] && [ "${OLD_KEY_ID}" != "null" ]; then
-            echo "Removing old Gitea SSH key ID: ${OLD_KEY_ID}"
-            curl -s -X DELETE "http://${GITEA_HOST}/api/v1/user/keys/${OLD_KEY_ID}" -H "Authorization: token ${BOT_TOKEN}"
+          OLD_KEY_IDS=$(printf '%s' "${KEYS_JSON}" | python3 -c 'import json,os,re,sys; new_b=next((x for x in os.environ.get("NEW_PUB_KEY","").split() if x.startswith("AAAA")),""); old_b=next((x for x in os.environ.get("OLD_PUB_KEY","").split() if x.startswith("AAAA")),""); print(" ".join(str(i["id"]) for i in (json.load(sys.stdin) or []) if isinstance(i,dict) and new_b and new_b not in str(i.get("key","")) and ((old_b and old_b in str(i.get("key",""))) or re.match(r"^git-\d{8,}$",str(i.get("title",""))))))')
+          if [ -n "${OLD_KEY_IDS}" ]; then
+            for KID in ${OLD_KEY_IDS}; do
+              echo "Removing old/orphan Gitea SSH key ID: ${KID}"
+              curl -s -X DELETE "http://${GITEA_HOST}/api/v1/user/keys/${KID}" -H "Authorization: token ${BOT_TOKEN}"
+            done
           else
-            echo "未找到相符的舊 Gitea SSH 金鑰 ID，跳過刪除。"
+            echo "未找到相符的舊或孤兒 Gitea SSH 金鑰 ID，跳過刪除。"
           fi
 
-      - name: 透過 GitHub API 移除舊 SSH 公鑰
+      - name: 透過 GitHub API 移除舊與孤兒自動 SSH 公鑰
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
           if [ -n "${GH_TOKEN}" ]; then
             KEYS_JSON=$(curl -s -X GET "https://api.github.com/user/keys" -H "Authorization: Bearer ${GH_TOKEN}")
-            OLD_KEY_ID=$(printf '%s' "${KEYS_JSON}" | python3 -c 'import json,os,sys; old=os.environ.get("OLD_PUB_KEY","").split(); blob=next((x for x in old if x.startswith("AAAA")),""); print(next((str(i["id"]) for i in (json.load(sys.stdin) or []) if isinstance(i,dict) and blob and blob in str(i.get("key",""))),""))')
-            if [ -n "${OLD_KEY_ID}" ] && [ "${OLD_KEY_ID}" != "null" ]; then
-              echo "Removing old GitHub SSH key ID: ${OLD_KEY_ID}"
-              curl -s -X DELETE "https://api.github.com/user/keys/${OLD_KEY_ID}" -H "Authorization: Bearer ${GH_TOKEN}"
+            OLD_KEY_IDS=$(printf '%s' "${KEYS_JSON}" | python3 -c 'import json,os,re,sys; new_b=next((x for x in os.environ.get("NEW_PUB_KEY","").split() if x.startswith("AAAA")),""); old_b=next((x for x in os.environ.get("OLD_PUB_KEY","").split() if x.startswith("AAAA")),""); print(" ".join(str(i["id"]) for i in (json.load(sys.stdin) or []) if isinstance(i,dict) and new_b and new_b not in str(i.get("key","")) and ((old_b and old_b in str(i.get("key",""))) or re.match(r"^git-\d{8,}$",str(i.get("title",""))))))')
+            if [ -n "${OLD_KEY_IDS}" ]; then
+              for KID in ${OLD_KEY_IDS}; do
+                echo "Removing old/orphan GitHub SSH key ID: ${KID}"
+                curl -s -X DELETE "https://api.github.com/user/keys/${KID}" -H "Authorization: Bearer ${GH_TOKEN}"
+              done
             else
-              echo "未找到相符的舊 GitHub SSH 金鑰 ID，跳過刪除。"
+              echo "未找到相符的舊或孤兒 GitHub SSH 金鑰 ID，跳過刪除。"
             fi
           fi
 
