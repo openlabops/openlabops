@@ -75,7 +75,6 @@
         path: "/home/{{ target_account }}/.ssh"
         state: directory
         owner: "{{ target_account }}"
-        group: "{{ target_account }}"
         mode: '0700'
 
     # --------------------------------------------------------------------------
@@ -140,7 +139,6 @@
         src: "{{ resolved_secrets_dir }}/ssh-key/{{ item }}"
         dest: "/home/{{ target_account }}/.ssh/{{ item }}"
         owner: "{{ target_account }}"
-        group: "{{ target_account }}"
         mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
       loop: "{{ managed_key_names }}"
       when: deploy_client_keys and resolved_secrets_dir != '' and ('dev' in group_names or (node_category | default('')) == 'dev')
@@ -153,7 +151,6 @@
         src: "{{ resolved_configs_dir }}/ssh-config/{{ ssh_profile }}/config"
         dest: "/home/{{ target_account }}/.ssh/config"
         owner: "{{ target_account }}"
-        group: "{{ target_account }}"
         mode: '0600'
         backup: yes
       when: deploy_ssh_config and resolved_configs_dir != ''
