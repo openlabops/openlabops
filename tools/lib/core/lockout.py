@@ -61,7 +61,7 @@ def is_node_intermittent() -> bool:
                 data = json.loads(p.read_text(encoding="utf-8"))
                 if isinstance(data, list):
                     for n in data:
-                        if n.get("hostname") == hname:
+                        if (n.get("hostname") or "").lower() == hname.lower():
                             data = n
                             break
                 if isinstance(data, dict):

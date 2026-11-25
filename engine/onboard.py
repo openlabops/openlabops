@@ -927,7 +927,7 @@ def decommission_node(target, target_user=None, purge=False, no_revoke=False, ca
                 continue
             try:
                 data = json.loads(p.read_text(encoding="utf-8"))
-                if data.get("hostname") == target or data.get("primary_ip") == target:
+                if (data.get("hostname") or "").lower() == target.lower() or data.get("primary_ip") == target:
                     target_file = p
                     target_data = data
                     target_hname = data.get("hostname", target)

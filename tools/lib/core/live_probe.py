@@ -440,7 +440,7 @@ def probe_single_node(node: dict, debug: bool = False) -> dict:
 
 def probe_single_node_by_name(hostname: str, debug: bool = True) -> dict:
     """單獨探測指定節點 (除錯測試專用)"""
-    target = next((t for t in CLUSTER_TARGETS if t["name"] == hostname or t["host"] == hostname), None)
+    target = next((t for t in CLUSTER_TARGETS if t["name"].lower() == hostname.lower() or t["host"].lower() == hostname.lower()), None)
     if not target:
         target = {"name": hostname, "host": hostname, "os": "Unknown", "mgr": "pkg"}
     return probe_single_node(target, debug=debug)

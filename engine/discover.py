@@ -242,7 +242,7 @@ def main():
         dest = out_path / f"node_{name}.json"
         
         success = False
-        if name == my_hostname or ip in ["127.0.0.1", "localhost"]:
+        if name.lower() == my_hostname.lower() or ip in ["127.0.0.1", "localhost"]:
             success = probe_local(dest)
         else:
             success = probe_remote(h, dest)

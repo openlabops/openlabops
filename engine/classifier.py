@@ -374,7 +374,7 @@ def classify_nodes(nodes):
         caps = n.get("capabilities", {})
         if caps.get("has_docker"):
             classified["capabilities"]["docker_hosts"].append(name)
-        if ".254" in ip or n.get("hostname") == "gateway" or caps.get("is_gateway"):
+        if ".254" in ip or (n.get("hostname") or "").lower() == "gateway" or caps.get("is_gateway"):
             classified["capabilities"]["gateways"].append(name)
 
     return classified
