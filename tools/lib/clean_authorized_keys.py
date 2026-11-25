@@ -38,6 +38,7 @@ def main(args_list=None):
     )
     parser.add_argument("-v", "--version", action="store_true", help=t("common.cli_version", "Show version information"))
     parser.add_argument("-t", "--target", type=str, default="all", help=t("clean_auth.cli_target", "Target host(s) or Ansible group (default: all)"))
+    parser.add_argument("-c", "--check", action="store_true", help=t("clean_auth.cli_check", "Audit only without modifying files (default behavior)"))
     parser.add_argument("--apply", action="store_true", help=t("clean_auth.cli_apply", "Apply changes and remove stale/unauthorized keys (default: dry-run)"))
     parser.add_argument("-y", "--yes", action="store_true", help=t("clean_auth.cli_yes", "Skip confirmation prompt when using --apply"))
 

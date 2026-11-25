@@ -29,7 +29,7 @@ jobs:
       - name: 檢出聯邦倉庫
         uses: ./.gitea/actions/checkout-federation
         with:
-          repos: "openlab-ansible openlab-secrets openlab-configs"
+          repos: "openlab-operations openlab-secrets openlab-configs"
           gitea_host: ${{ vars.GIT_HOST || 'gitea.lab' }}
           org_name: ${{ vars.ORG_NAME || 'OpenLabOps' }}
           token: ${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}
