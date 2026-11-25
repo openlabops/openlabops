@@ -12,7 +12,7 @@ inputs:
   dest_dir:
     description: "Destination SSH directory on runner"
     required: false
-    default: "$HOME/.ssh"
+    default: "~/.ssh"
 
 runs:
   using: "composite"
@@ -24,9 +24,10 @@ runs:
         SECRETS_DIR: ${{ inputs.secrets_dir }}
         DEST_DIR: ${{ inputs.dest_dir }}
       run: |
-        # Expand ~ if necessary
+        # Expand ~ or literal $HOME if necessary
         case "$DEST_DIR" in
           "~"*) DEST_DIR="${HOME}${DEST_DIR#\~}" ;;
+          '$HOME'*) DEST_DIR="${HOME}${DEST_DIR#\$HOME}" ;;
         esac
 
         if [ ! -d "$SECRETS_DIR" ]; then
