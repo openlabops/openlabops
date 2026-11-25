@@ -58,6 +58,10 @@ runs:
           mkdir -p "$WORK_DIR/inventory"
           ln -s ../group_vars "$WORK_DIR/inventory/group_vars"
         fi
+        if [ -d "$WORK_DIR/host_vars" ] && [ ! -e "$WORK_DIR/inventory/host_vars" ]; then
+          mkdir -p "$WORK_DIR/inventory"
+          ln -s ../host_vars "$WORK_DIR/inventory/host_vars"
+        fi
         export ANSIBLE_HOST_KEY_CHECKING="False"
 
         set -- -i "$INVENTORY" "$PLAYBOOK"
