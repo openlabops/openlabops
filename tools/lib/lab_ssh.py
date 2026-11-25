@@ -88,7 +88,8 @@ def rotate_all_server_keys(target_nodes: str = "dev") -> bool:
     ui_divider()
     step_num = "2/2" if is_openlab else "3/3"
     ui_info(f"👉 階段 {step_num}: 派發 Git 平台認證 SSH 金鑰輪換...")
-    if not rotate_git_keys(target_nodes):
+    git_targets = "all:!appliances" if target_nodes == "dev" else target_nodes
+    if not rotate_git_keys(git_targets):
         ui_warn("Git 金鑰輪換失敗或中斷。")
         return False
     ui_success(f"✅ 階段 {step_num} 完成！")

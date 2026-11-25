@@ -15,7 +15,16 @@ runs:
         PACKAGES: ${{ inputs.packages }}
       run: |
         echo "🔧 [Action: setup-environment] Checking system dependencies..."
-        if ! command -v git >/dev/null 2>&1 || ! command -v ssh >/dev/null 2>&1 || ! command -v ansible-playbook >/dev/null 2>&1 || ! command -v rsync >/dev/null 2>&1 || ! command -v python3 >/dev/null 2>&1; then
+        NEED_INSTALL=0
+        for bin in git ssh ansible-playbook rsync python3; do
+          command -v "$bin" >/dev/null 2>&1 || NEED_INSTALL=1
+        done
+        for pkg in $PACKAGES; do
+          case "$pkg" in
+            jq|curl) command -v "$pkg" >/dev/null 2>&1 || NEED_INSTALL=1 ;;
+          esac
+        done
+        if [ "$NEED_INSTALL" -eq 1 ]; then
           if command -v apk >/dev/null 2>&1; then
             if [ "$(id -u)" -eq 0 ]; then
               # shellcheck disable=SC2086
