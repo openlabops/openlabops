@@ -79,6 +79,9 @@ jobs:
           if [ -f "/tmp/{{ git_platform.repo_prefix }}-operations/engine/classifier.py" ]; then
             python3 "/tmp/{{ git_platform.repo_prefix }}-operations/engine/classifier.py" --apply || true
           fi
+          if [ -f "/tmp/{{ git_platform.repo_prefix }}-operations/engine/compiler.py" ]; then
+            python3 "/tmp/{{ git_platform.repo_prefix }}-operations/engine/compiler.py" --apply --ssh-config-only --base-dir /tmp || true
+          fi
 
       - name: 推送至 Configs 倉庫
         uses: ./.gitea/actions/git-sync-commit

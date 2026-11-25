@@ -65,6 +65,7 @@ SYMLINKS = [
     ("bin/sync-ops-tools", "sync-ops-tools"),
     ("bin/generate-host-ssh-key", "generate-host-ssh-key"),
     ("bin/revoke-host-ssh-key", "revoke-host-ssh-key"),
+    ("bin/clean-authorized-keys", "clean-authorized-keys"),
     ("bin/render-node-doc", "render-node-doc"),
 ]
 

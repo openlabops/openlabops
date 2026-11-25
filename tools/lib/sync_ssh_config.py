@@ -182,12 +182,32 @@ def main():
                         help=t("sync_cfg.cli_profile", f"Select config profile (openlab or endpoint; detected: {detected_profile})", profile=detected_profile))
     parser.add_argument("-c", "--check", action="store_true", help=t("sync_cfg.cli_check", "Check for differences without writing changes"))
     parser.add_argument("-f", "--force", action="store_true", help=t("sync_cfg.cli_force", "Force overwrite and backup existing file"))
+    parser.add_argument("-d", "--deploy", action="store_true", help=t("sync_cfg.cli_deploy", "Dispatch Gitea Runner to deploy latest ssh-config to target nodes"))
+    parser.add_argument("-n", "--node", type=str, default="all:!appliances", help=t("sync_cfg.cli_node", "Target node/group for --deploy (default: all:!appliances)"))
 
     args = parser.parse_args()
 
     if args.version:
         from core.version import print_version
         print_version("OpenLabOps Standard SSH Client Config Sync Tool")
+        return
+
+    if args.deploy:
+        from core.gitea_api import gitea_dispatch
+        ui_header("OpenLabOps SSH Config 遠端節點派發 (Runner Playbook)")
+        ui_kv("目標節點", args.node)
+        ui_divider()
+        ok = gitea_dispatch("deploy-ssh-keys.yml", {
+            "ref": "main",
+            "inputs": {
+                "target_hosts": args.node,
+                "deploy_client_keys": "false",
+                "deploy_authorized_keys": "false",
+                "deploy_ssh_config": "true"
+            }
+        })
+        if not ok:
+            sys.exit(1)
         return
 
     ui_header("OpenLabOps Standard SSH Client Config 同步工具")

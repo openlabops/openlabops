@@ -53,7 +53,7 @@ def rotate_storage_keys(target_nodes: str = "dev") -> bool:
 rotate_openlab_keys = rotate_storage_keys
 
 
-def rotate_git_keys(target_nodes: str = "dev") -> bool:
+def rotate_git_keys(target_nodes: str = "all:!appliances") -> bool:
     target_desc = f" (同步私鑰至工作端點: {target_nodes})" if target_nodes else ""
     ui_info(f"正在向 Gitea Actions 派發 Git 平台認證金鑰輪換工作流{target_desc}...")
     return gitea_dispatch("rotate-git-keys.yml", {
@@ -113,6 +113,7 @@ def interactive_menu():
         opt_git = "🔑 派發 Git 平台認證金鑰輪換 (rotate-git-keys.yml)"
         opt_host = "💻 本地生成當前端點 SSH 金鑰對並部署至伺服器 (支援 WSL 自動辨識)"
         opt_revoke = "🚫 派發清除特定端點公鑰 (revoke-host-key.yml)"
+        opt_clean_auth = "🧹 稽核與清理全網 authorized_keys 殘留公鑰 (clean-authorized-keys.yml)"
         opt_sync_keys = "🔄 同步本機受控 SSH 管理金鑰 (~/.ssh/*.key)"
         opt_sync_cfg = "🔄 同步本機標準 ~/.ssh/config 連線別名設定"
         opt_exit = "❌ 退出 SSH 控制台"
@@ -120,7 +121,7 @@ def interactive_menu():
         options = [opt_all, opt_ansible]
         if not is_openlab:
             options.append(opt_storage)
-        options.extend([opt_git, opt_host, opt_revoke, opt_sync_keys, opt_sync_cfg, opt_exit])
+        options.extend([opt_git, opt_host, opt_revoke, opt_clean_auth, opt_sync_keys, opt_sync_cfg, opt_exit])
 
         choice_idx, selected_val = ui_select("請選取 SSH 維運項目:", options)
 
@@ -135,8 +136,8 @@ def interactive_menu():
             if ui_confirm("確定要輪換 儲存與設備 (Storage & Virtualization) 金鑰？ (私鑰將自動發布至 dev 群組)", "y"):
                 rotate_storage_keys("dev")
         elif selected_val == opt_git:
-            if ui_confirm("確定要輪換 Git 認證金鑰？ (私鑰將自動發布至 dev 群組)", "y"):
-                rotate_git_keys("dev")
+            if ui_confirm("確定要輪換 Git 認證金鑰？ (私鑰將自動發布至所有標準節點)", "y"):
+                rotate_git_keys("all:!appliances")
         elif selected_val == opt_host:
             ep_name = get_default_endpoint_name()
             custom_name = input(f"請輸入端點名稱 (預設: {ep_name}): ").strip().lower() or ep_name
@@ -148,6 +149,12 @@ def interactive_menu():
         elif selected_val == opt_revoke:
             from revoke_host_ssh_key import main as revoke_main
             revoke_main([])
+        elif selected_val == opt_clean_auth:
+            from clean_authorized_keys import dispatch_clean_authorized_keys
+            if ui_confirm("確定要實際清理全網非白名單之 authorized_keys？（選 N 則僅執行 Dry-Run 稽核）", "n"):
+                dispatch_clean_authorized_keys("all", dry_run=False)
+            else:
+                dispatch_clean_authorized_keys("all", dry_run=True)
         elif selected_val == opt_sync_keys:
             sync_ssh_keys()
         elif selected_val == opt_sync_cfg:
@@ -170,6 +177,8 @@ def main(args_list=None):
     parser.add_argument("--sync-keys", action="store_true", help=t("ssh.cli_sync_keys", "Sync local managed SSH private and public keys"))
     parser.add_argument("--sync-config", action="store_true", help=t("ssh.cli_sync_config", "Sync standard ~/.ssh/config host aliases"))
     parser.add_argument("--revoke", type=str, help=t("ssh.cli_revoke", "Revoke SSH public key for the specified endpoint (e.g. --revoke laptop)"))
+    parser.add_argument("--clean-auth-keys", action="store_true", help=t("ssh.cli_clean_auth", "Audit and clean stale/unauthorized keys from remote authorized_keys"))
+    parser.add_argument("--apply", action="store_true", help=t("ssh.cli_apply", "Apply changes for --clean-auth-keys (default: dry-run)"))
 
     args = parser.parse_args(args_list)
 
@@ -194,7 +203,7 @@ def main(args_list=None):
         return
 
     if args.rotate_git:
-        rotate_git_keys(args.target)
+        rotate_git_keys(args.target if args.target != "control-node" else "all:!appliances")
         return
 
     if args.gen_key is not None:
@@ -217,6 +226,11 @@ def main(args_list=None):
 
     if args.revoke:
         revoke_endpoint_key(args.revoke.strip().lower(), purge_secrets=True)
+        return
+
+    if args.clean_auth_keys:
+        from clean_authorized_keys import dispatch_clean_authorized_keys
+        dispatch_clean_authorized_keys(target_hosts=args.target if args.target != "control-node" else "all", dry_run=not args.apply)
         return
 
     interactive_menu()

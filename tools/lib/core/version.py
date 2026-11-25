@@ -17,7 +17,7 @@ if TOOL_ROOT not in sys.path:
 
 from core.gitea_api import load_gitea_token, GITEA_URL, REPO_OWNER
 
-FALLBACK_VERSION = "1.0.1"
+FALLBACK_VERSION = "1.0.3"
 VERSION_CANDIDATES = [
     os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "VERSION")),
     os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "VERSION")),

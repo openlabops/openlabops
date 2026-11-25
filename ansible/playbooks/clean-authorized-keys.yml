@@ -1,0 +1,253 @@
+---
+# ==============================================================================
+# Playbook: Audit & Clean Stale/Unauthorized Keys in authorized_keys
+# Target: {{ target_hosts | default('all') }}
+# Usage:
+#   ansible-playbook -i inventory/hosts.yml playbooks/clean-authorized-keys.yml \
+#     --extra-vars "target_hosts=all dry_run=true"
+# ==============================================================================
+- name: "探測機密庫白名單公鑰並整理受控端 authorized_keys (Standard Nodes)"
+  hosts: "{{ target_hosts | default('all') }}:!appliances"
+  gather_facts: true
+  become: true
+
+  vars:
+    dry_run_mode: "{{ (dry_run | default('true')) | bool }}"
+    target_account: "{{ target_user | default(admin_user | default('labadmin')) }}"
+    ansible_account: "{{ ansible_service_user | default(cluster.ansible_user | default('lab')) if cluster is defined else (ansible_service_user | default('lab')) }}"
+    ansible_pub_name: "{{ (keys.ansible | regex_replace('\\.key$', '.pub')) if keys is defined and keys.ansible is defined else 'lab.pub' }}"
+    user_pub_name: "{{ (keys.user | regex_replace('\\.key$', '.pub')) if keys is defined and keys.user is defined else 'openlab.pub' }}"
+    git_pub_name: "{{ (keys.git | regex_replace('\\.key$', '.pub')) if keys is defined and keys.git is defined else 'git-openlab.pub' }}"
+
+    control_secrets_candidates:
+      - "{{ custom_secrets_dir | default('/nonexistent') }}"
+      - "/tmp/openlab-secrets"
+      - "{{ lookup('env', 'HOME') }}/openlab-secrets"
+
+  tasks:
+    - name: 探測控制端機密庫 (secrets) 路徑
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      loop: "{{ control_secrets_candidates }}"
+      register: secrets_stats
+
+    - name: 確定控制端可用機密庫路徑
+      ansible.builtin.set_fact:
+        resolved_secrets_dir: "{{ (secrets_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+      run_once: true
+
+    - name: 在控制端收集白名單公鑰指紋 (Base64 Key Blobs)
+      ansible.builtin.command:
+        cmd: >-
+          python3 -c '
+          import glob, json, os, sys
+          sec_dir, ans_pub, usr_pub, git_pub = sys.argv[1:5]
+          ans_blobs, usr_blobs = [], []
+          excluded = {ans_pub, git_pub, "kvm.pub", "storage.pub", "ansible.pub", "git.pub"}
+          for p in sorted(glob.glob(os.path.join(sec_dir, "ssh-key", "*.pub"))):
+              bn = os.path.basename(p)
+              with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                  for line in f:
+                      parts = line.strip().split()
+                      blob = next((x for x in parts if x.startswith("AAAA")), "")
+                      if not blob:
+                          continue
+                      if bn == ans_pub:
+                          ans_blobs.append(blob)
+                      elif bn == usr_pub or bn not in excluded:
+                          usr_blobs.append(blob)
+          print(json.dumps({"ansible": sorted(set(ans_blobs)), "user": sorted(set(usr_blobs))}))
+          ' "{{ resolved_secrets_dir }}" "{{ ansible_pub_name }}" "{{ user_pub_name }}" "{{ git_pub_name }}"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      register: whitelist_raw
+      changed_when: false
+      when: resolved_secrets_dir != ''
+
+    - name: 解析白名單公鑰清單
+      ansible.builtin.set_fact:
+        whitelist_map: "{{ whitelist_raw.stdout | from_json }}"
+      run_once: true
+      when: whitelist_raw is defined and whitelist_raw.stdout is defined
+
+    - name: 稽核並清理 {{ target_account }} 與 {{ ansible_account }} 之 authorized_keys
+      ansible.builtin.command:
+        cmd: >-
+          python3 -c '
+          import json, os, sys
+          dry_run = sys.argv[1].lower() == "true"
+          accounts = json.loads(sys.argv[2])
+          whitelist = json.loads(sys.argv[3])
+          report = []
+          for acct, role in accounts:
+              auth_path = f"/home/{acct}/.ssh/authorized_keys"
+              if not os.path.exists(auth_path):
+                  continue
+              allowed = set(whitelist.get(role, []))
+              if not allowed:
+                  report.append(f"{acct}: skipped (empty whitelist)")
+                  continue
+              with open(auth_path, "r", encoding="utf-8", errors="ignore") as f:
+                  lines = f.readlines()
+              kept, removed, seen = [], [], set()
+              for line in lines:
+                  s = line.strip()
+                  if not s or s.startswith("#"):
+                      kept.append(line)
+                      continue
+                  blob = next((x for x in s.split() if x.startswith("AAAA")), "")
+                  if blob in allowed and blob not in seen:
+                      seen.add(blob)
+                      kept.append(line)
+                  else:
+                      reason = "duplicate" if blob in seen else "unauthorized/stale"
+                      removed.append(f"{reason}: {s[:72]}")
+              if removed:
+                  if not dry_run and seen:
+                      with open(auth_path, "w", encoding="utf-8") as f:
+                          f.writelines(kept)
+                      os.chmod(auth_path, 0o600)
+                  action = "WOULD REMOVE" if dry_run else "REMOVED"
+                  report.append(f"{acct}: {action} {len(removed)} key(s) -> " + "; ".join(removed))
+              else:
+                  report.append(f"{acct}: clean ({len(seen)} valid key(s))")
+          print(" | ".join(report) if report else "no authorized_keys found")
+          ' "{{ dry_run_mode | string }}" '{{ [[target_account, "user"], [ansible_account, "ansible"]] | to_json }}' '{{ whitelist_map | to_json }}'
+      register: clean_result
+      changed_when: "'REMOVED ' in clean_result.stdout"
+      when: whitelist_map is defined
+
+    - name: 輸出清理結果
+      ansible.builtin.debug:
+        msg: "[{{ inventory_hostname }}] {{ clean_result.stdout | default('skipped') }}"
+
+- name: "稽核並清理 Storage authorized_keys (/cf/conf/authorized_keys)"
+  hosts: "{{ target_hosts | default('all') }}:&storage"
+  gather_facts: false
+
+  vars:
+    dry_run_mode: "{{ (dry_run | default('true')) | bool }}"
+    user_pub_name: "{{ (keys.user | regex_replace('\\.key$', '.pub')) if keys is defined and keys.user is defined else 'openlab.pub' }}"
+    control_secrets_candidates:
+      - "{{ custom_secrets_dir | default('/nonexistent') }}"
+      - "/tmp/openlab-secrets"
+      - "{{ lookup('env', 'HOME') }}/openlab-secrets"
+
+  tasks:
+    - name: 探測控制端機密庫 (secrets) 路徑
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      run_once: true
+      loop: "{{ control_secrets_candidates }}"
+      register: xnas_sec_stats
+
+    - name: 確定控制端可用機密庫路徑
+      ansible.builtin.set_fact:
+        xnas_sec_dir: "{{ (xnas_sec_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+      run_once: true
+
+    - name: 讀取管理使用者公鑰內容
+      ansible.builtin.slurp:
+        src: "{{ xnas_sec_dir }}/ssh-key/{{ user_pub_name }}"
+      delegate_to: localhost
+      run_once: true
+      register: xnas_pub_b64
+      when: xnas_sec_dir != ''
+
+    - name: 檢查並清理 Storage authorized_keys
+      ansible.builtin.raw: |
+        sh -c '
+        ALLOW_BLOB="{{ (xnas_pub_b64.content | b64decode | trim).split() | select("match", "^AAAA") | first }}"
+        AUTH="/cf/conf/authorized_keys"
+        [ -f "$AUTH" ] || AUTH="/root/.ssh/authorized_keys"
+        [ -f "$AUTH" ] || { echo "no authorized_keys"; exit 0; }
+        TOTAL=$(grep -c "AAAA" "$AUTH" 2>/dev/null || echo 0)
+        MATCH=$(grep -c "$ALLOW_BLOB" "$AUTH" 2>/dev/null || echo 0)
+        if [ "$TOTAL" -le "$MATCH" ] && [ "$MATCH" -le 1 ]; then
+          echo "storage: clean ($MATCH valid key)"
+          exit 0
+        fi
+        if [ "{{ dry_run_mode | lower }}" = "true" ]; then
+          echo "storage: WOULD REMOVE $((TOTAL - (MATCH > 0 ? 1 : 0))) stale/duplicate key(s)"
+          exit 0
+        fi
+        [ "$MATCH" -ge 1 ] || { echo "storage: aborted (whitelist key missing in target)"; exit 1; }
+        mount -u -w /cf 2>/dev/null || true
+        grep -m 1 "$ALLOW_BLOB" "$AUTH" > "${AUTH}.tmp"
+        mv -f "${AUTH}.tmp" "$AUTH"
+        chmod 600 "$AUTH"
+        if [ "$AUTH" = "/cf/conf/authorized_keys" ]; then
+          cp -f /cf/conf/authorized_keys /root/.ssh/authorized_keys
+          chmod 600 /root/.ssh/authorized_keys
+        fi
+        mount -u -r /cf 2>/dev/null || true
+        echo "storage: REMOVED stale/duplicate keys"
+        '
+      register: xnas_clean_res
+      changed_when: "'REMOVED ' in xnas_clean_res.stdout"
+      when: xnas_pub_b64 is defined and xnas_pub_b64.content is defined
+
+- name: "稽核並清理 Virtualization authorized_keys (/etc/ssh/keys-root/authorized_keys)"
+  hosts: "{{ target_hosts | default('all') }}:&hypervisors"
+  gather_facts: false
+
+  vars:
+    dry_run_mode: "{{ (dry_run | default('true')) | bool }}"
+    kvm_pub_name: "{{ (ssh_keys.kvm_appliance | regex_replace('\\.key$', '.pub')) if ssh_keys is defined and ssh_keys.kvm_appliance is defined else 'kvm.pub' }}"
+    control_secrets_candidates:
+      - "{{ custom_secrets_dir | default('/nonexistent') }}"
+      - "/tmp/openlab-secrets"
+      - "{{ lookup('env', 'HOME') }}/openlab-secrets"
+
+  tasks:
+    - name: 探測控制端機密庫 (secrets) 路徑
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      delegate_to: localhost
+      run_once: true
+      loop: "{{ control_secrets_candidates }}"
+      register: kvm_sec_stats
+
+    - name: 確定控制端可用機密庫路徑
+      ansible.builtin.set_fact:
+        kvm_sec_dir: "{{ (kvm_sec_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
+      run_once: true
+
+    - name: 讀取 Virtualization 公鑰內容
+      ansible.builtin.slurp:
+        src: "{{ kvm_sec_dir }}/ssh-key/{{ kvm_pub_name }}"
+      delegate_to: localhost
+      run_once: true
+      register: kvm_pub_b64
+      when: kvm_sec_dir != ''
+
+    - name: 檢查並清理 Virtualization authorized_keys
+      ansible.builtin.raw: |
+        sh -c '
+        ALLOW_BLOB="{{ (kvm_pub_b64.content | b64decode | trim).split() | select("match", "^AAAA") | first }}"
+        AUTH="/etc/ssh/keys-root/authorized_keys"
+        [ -f "$AUTH" ] || { echo "no kvm authorized_keys"; exit 0; }
+        TOTAL=$(grep -c "AAAA" "$AUTH" 2>/dev/null || echo 0)
+        MATCH=$(grep -c "$ALLOW_BLOB" "$AUTH" 2>/dev/null || echo 0)
+        if [ "$TOTAL" -le "$MATCH" ] && [ "$MATCH" -le 1 ]; then
+          echo "kvm: clean ($MATCH valid key)"
+          exit 0
+        fi
+        if [ "{{ dry_run_mode | lower }}" = "true" ]; then
+          echo "kvm: WOULD REMOVE stale/duplicate key(s)"
+          exit 0
+        fi
+        [ "$MATCH" -ge 1 ] || { echo "kvm: aborted (whitelist key missing in target)"; exit 1; }
+        grep -m 1 "$ALLOW_BLOB" "$AUTH" > "${AUTH}.tmp"
+        mv -f "${AUTH}.tmp" "$AUTH"
+        chmod 600 "$AUTH"
+        echo "kvm: REMOVED stale/duplicate keys"
+        '
+      register: kvm_clean_res
+      changed_when: "'REMOVED ' in kvm_clean_res.stdout"
+      when: kvm_pub_b64 is defined and kvm_pub_b64.content is defined and (appliance_type | default('kvm')) == 'kvm'

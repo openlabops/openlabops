@@ -34,7 +34,7 @@ Host gw-node {{ networks.gateway_ip }}
 {%- for n in nodes %}
 Host {{ n.hostname }} {{ n.primary_ip }}
     HostName {{ n.primary_ip }}
-    User {{ n.target_user if n.target_user is defined else cluster.ansible_user }}
+    User {{ n.target_user }}
     IdentityFile ~/.ssh/{{ keys.ansible }}
     IdentityFile ~/.ssh/{{ keys.user }}
     IdentitiesOnly yes

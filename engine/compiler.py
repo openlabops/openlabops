@@ -398,6 +398,9 @@ def build_compilation_targets(args, context, base_dir: Path, dest_prefix: str):
                 "compare_file": base_dir / f"{dest_prefix}workflows" / ".gitea" / "workflows" / dest_filename,
             })
 
+    if getattr(args, "ssh_config_only", False):
+        return [t for t in targets if t["template"].name == "ssh_config.j2"]
+
     return targets
 
 
@@ -825,9 +828,10 @@ def main():
     parser.add_argument("--create-dest-dirs", action="store_true", help="Create downstream repo directories in base-dir if they do not exist")
     parser.add_argument("--full-federation", action="store_true", help="Synthesize and sync all non-template federation core code to homelab-*")
     parser.add_argument("--legacy-sync", action="store_true", help="Synchronize legacy homelab-configs/homelab-secrets instead of newly discovered telemetry")
+    parser.add_argument("--ssh-config-only", action="store_true", help="Only render ssh_config.j2 targets into configs/secrets repos")
     args = parser.parse_args()
 
-    if args.apply:
+    if args.apply and not args.ssh_config_only and os.environ.get("CI", "").lower() != "true":
         lib_dir = str(OPS_DIR / "tools" / "lib")
         if lib_dir not in sys.path:
             sys.path.insert(0, lib_dir)
@@ -919,6 +923,10 @@ def main():
             sys.path.insert(0, str(OPS_DIR))
         from engine.classifier import load_node_files
         context["nodes"] = load_node_files(write_back=False)
+        _def_ansible_u = context["cluster"].get("ansible_user", "ansible")
+        for _n in context["nodes"]:
+            if not _n.get("target_user"):
+                _n["target_user"] = _def_ansible_u
     except Exception:
         context["nodes"] = []
 

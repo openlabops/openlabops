@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       target_nodes:
-        description: 'Target Node(s) to automatically deploy newly rotated client keys (e.g. dev, localhost)'
+        description: 'Target Node(s) to automatically deploy newly rotated git keys (e.g. all:!appliances, dev, servers)'
         required: false
-        default: 'dev'
+        default: 'all:!appliances'
 
 jobs:
   rotate-git-keys:
@@ -138,4 +138,4 @@ jobs:
         uses: ./.gitea/actions/run-ansible-playbook
         with:
           playbook: "playbooks/deploy-node-ssh-keys.yml"
-          extra_vars: "target_hosts=${{ inputs.target_nodes || 'dev' }} custom_secrets_dir=/tmp/openlab-secrets custom_configs_dir=/tmp/openlab-configs client_keys=true authorized_keys=true ssh_config=true"
+          extra_vars: "target_hosts=${{ inputs.target_nodes || 'all:!appliances' }} custom_secrets_dir=/tmp/openlab-secrets custom_configs_dir=/tmp/openlab-configs client_keys=false git_keys=true authorized_keys=true ssh_config=true"
