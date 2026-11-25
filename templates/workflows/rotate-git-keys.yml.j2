@@ -93,16 +93,7 @@ jobs:
           GITEA_HOST: ${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}
         run: |
           KEYS_JSON=$(curl -s -X GET "http://${GITEA_HOST}/api/v1/user/keys" -H "Authorization: token ${BOT_TOKEN}")
-          OLD_KEY_ID=$(printf '%s' "${KEYS_JSON}" | python3 -c '
-import json, os, sys
-old = os.environ.get("OLD_PUB_KEY", "").strip().split()
-blob = next((x for x in old if x.startswith("AAAA")), "")
-if blob:
-    for item in json.load(sys.stdin) or []:
-        if isinstance(item, dict) and blob in str(item.get("key", "")):
-            print(item.get("id", ""))
-            break
-')
+          OLD_KEY_ID=$(printf '%s' "${KEYS_JSON}" | python3 -c 'import json,os,sys; old=os.environ.get("OLD_PUB_KEY","").split(); blob=next((x for x in old if x.startswith("AAAA")),""); print(next((str(i["id"]) for i in (json.load(sys.stdin) or []) if isinstance(i,dict) and blob and blob in str(i.get("key",""))),""))')
           if [ -n "${OLD_KEY_ID}" ] && [ "${OLD_KEY_ID}" != "null" ]; then
             echo "Removing old Gitea SSH key ID: ${OLD_KEY_ID}"
             curl -s -X DELETE "http://${GITEA_HOST}/api/v1/user/keys/${OLD_KEY_ID}" -H "Authorization: token ${BOT_TOKEN}"
@@ -116,16 +107,7 @@ if blob:
         run: |
           if [ -n "${GH_TOKEN}" ]; then
             KEYS_JSON=$(curl -s -X GET "https://api.github.com/user/keys" -H "Authorization: Bearer ${GH_TOKEN}")
-            OLD_KEY_ID=$(printf '%s' "${KEYS_JSON}" | python3 -c '
-import json, os, sys
-old = os.environ.get("OLD_PUB_KEY", "").strip().split()
-blob = next((x for x in old if x.startswith("AAAA")), "")
-if blob:
-    for item in json.load(sys.stdin) or []:
-        if isinstance(item, dict) and blob in str(item.get("key", "")):
-            print(item.get("id", ""))
-            break
-')
+            OLD_KEY_ID=$(printf '%s' "${KEYS_JSON}" | python3 -c 'import json,os,sys; old=os.environ.get("OLD_PUB_KEY","").split(); blob=next((x for x in old if x.startswith("AAAA")),""); print(next((str(i["id"]) for i in (json.load(sys.stdin) or []) if isinstance(i,dict) and blob and blob in str(i.get("key",""))),""))')
             if [ -n "${OLD_KEY_ID}" ] && [ "${OLD_KEY_ID}" != "null" ]; then
               echo "Removing old GitHub SSH key ID: ${OLD_KEY_ID}"
               curl -s -X DELETE "https://api.github.com/user/keys/${OLD_KEY_ID}" -H "Authorization: Bearer ${GH_TOKEN}"
