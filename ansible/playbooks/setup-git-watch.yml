@@ -1,0 +1,110 @@
+---
+# ==============================================================================
+# Playbook: 部署輕量 Git 遠端同步追蹤與防呆守護 (lab-git-watch + systemd timer)
+# 設計原則：
+#   - dev 節點 (control-node / agy): mode = fetch_only (僅背景無鎖 fetch，供 Powerline / lab-status 顯示)
+#   - 非 dev 容器節點 (PhotonOS / OCI): docker-compose mode = auto_pull
+#     (僅在乾淨且無 ahead 時安全 --ff-only，有未 commit/push 一律 HOLD 停機並高亮上報)
+# ==============================================================================
+- name: Setup Lightweight Git Watch & Safeguard Timer
+  hosts: "{{ target_hosts | default('all:!appliances') }}"
+  gather_facts: true
+
+  vars:
+    git_watch_prefix: "{{ cluster_prefix | default('openlab') }}"
+    git_watch_interval: "3min"
+    git_watch_user: "{{ ansible_user | default(admin_user | default('labadmin')) }}"
+
+  tasks:
+    - name: 確保設定目錄存在 (/etc/{{ git_watch_prefix }})
+      ansible.builtin.file:
+        path: "/etc/{{ git_watch_prefix }}"
+        state: directory
+        mode: "0755"
+      become: true
+
+    - name: 探測節點上既有的受控 Git 倉庫
+      ansible.builtin.stat:
+        path: "{{ item }}/.git"
+      loop:
+        - "/home/{{ git_watch_user }}/docker-compose"
+        - "/root/docker-compose"
+        - "/home/{{ git_watch_user }}/{{ git_watch_prefix }}-ops"
+        - "/home/{{ git_watch_user }}/openlabops"
+        - "/home/{{ git_watch_user }}/{{ git_watch_prefix }}-operations"
+        - "/home/{{ git_watch_user }}/{{ git_watch_prefix }}-workflows"
+        - "/home/{{ git_watch_user }}/{{ git_watch_prefix }}-configs"
+      register: repo_stats
+
+    - name: 產生節點 Git Watch 設定清單
+      ansible.builtin.set_fact:
+        discovered_git_repos: >-
+          {%- set items = [] -%}
+          {%- set seen = [] -%}
+          {%- for r in repo_stats.results -%}
+            {%- if r.stat.exists and r.item not in seen -%}
+              {%- set _ = seen.append(r.item) -%}
+              {%- set rname = r.item.split('/')[-1] -%}
+              {%- set rmode = 'auto_pull' if (rname == 'docker-compose' and ('dev' not in group_names)) else 'fetch_only' -%}
+              {%- set _ = items.append({'name': rname, 'path': r.item, 'mode': rmode}) -%}
+            {%- endif -%}
+          {%- endfor -%}
+          {{ items }}
+
+    - name: 寫入 /etc/{{ git_watch_prefix }}/git-watch.json
+      ansible.builtin.copy:
+        content: "{{ {'repos': discovered_git_repos} | to_nice_json }}\n"
+        dest: "/etc/{{ git_watch_prefix }}/git-watch.json"
+        mode: "0644"
+      become: true
+
+    - name: 檢查系統是否使用 systemd (PID 1)
+      ansible.builtin.command: ps -p 1 -o comm=
+      register: pid1_comm
+      changed_when: false
+      failed_when: false
+
+    - name: 部署 {{ git_watch_prefix }}-git-watch.service
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ git_watch_prefix }}-git-watch.service"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description={{ git_watch_prefix | capitalize }} Lightweight Git Fetch & Safeguard Watch
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          User={{ 'root' if ('dev' not in group_names and ('/root/docker-compose' in (discovered_git_repos | map(attribute='path') | list))) else git_watch_user }}
+          ExecStart=/usr/local/bin/lab-git-watch --quiet
+      become: true
+      when: "'systemd' in (pid1_comm.stdout | default(''))"
+
+    - name: 部署 {{ git_watch_prefix }}-git-watch.timer (每 {{ git_watch_interval }} 執行)
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ git_watch_prefix }}-git-watch.timer"
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Run {{ git_watch_prefix | capitalize }} Git Watch every {{ git_watch_interval }}
+
+          [Timer]
+          OnBootSec=30s
+          OnUnitActiveSec={{ git_watch_interval }}
+          RandomizedDelaySec=20s
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+      become: true
+      when: "'systemd' in (pid1_comm.stdout | default(''))"
+
+    - name: 重新載入 systemd 並啟用 git-watch timer
+      ansible.builtin.systemd:
+        name: "{{ git_watch_prefix }}-git-watch.timer"
+        enabled: true
+        state: started
+        daemon_reload: true
+      become: true
+      when: "'systemd' in (pid1_comm.stdout | default(''))"

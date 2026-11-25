@@ -59,6 +59,7 @@ SYMLINKS = [
     ("bin/lab-info", "lab-info"),
     ("bin/lab-backup", "lab-backup"),
     ("bin/lab-upgrade", "lab-upgrade"),
+    ("bin/lab-git-watch", "lab-git-watch"),
     ("bin/lab-man", "lab-man"),
     ("bin/sync-ssh-config", "sync-ssh-config"),
     ("bin/sync-ssh-keys", "sync-ssh-keys"),

@@ -583,6 +583,79 @@ class TestInternationalizationAndLanguageSelection(unittest.TestCase):
         self.assertEqual(compare_versions("0.5.0", "0.5.0"), 0)
         self.assertEqual(compare_versions("0.4.0", "0.5.0-beta"), -1)
 
+    def test_git_watch_safeguard_and_dashboard_summary(self):
+        import subprocess
+        import tempfile
+        from pathlib import Path
+        from tools.lib.lab_git_watch import inspect_git_repo
+        from tools.lib.lab_status import collect_git_watch_summary
+
+        def _git(cwd, *args):
+            return subprocess.run(["git", "-C", str(cwd), *args], check=True, capture_output=True, text=True)
+
+        with tempfile.TemporaryDirectory(prefix="lab-git-watch-test-") as tmp:
+            tmp_p = Path(tmp)
+            bare = tmp_p / "origin.git"
+            peer = tmp_p / "peer"
+            node_repo = tmp_p / "node_repo"
+            subprocess.run(["git", "init", "--bare", str(bare)], check=True, capture_output=True)
+            subprocess.run(["git", "clone", str(bare), str(peer)], check=True, capture_output=True)
+            _git(peer, "config", "user.email", "test@example.com")
+            _git(peer, "config", "user.name", "Test")
+            (peer / "README.md").write_text("v1\n", encoding="utf-8")
+            _git(peer, "add", "README.md")
+            _git(peer, "commit", "-m", "init")
+            _git(peer, "branch", "-M", "main")
+            _git(peer, "push", "-u", "origin", "main")
+            _git(bare, "symbolic-ref", "HEAD", "refs/heads/main")
+
+            subprocess.run(["git", "clone", str(bare), str(node_repo)], check=True, capture_output=True)
+            _git(node_repo, "config", "user.email", "test@example.com")
+            _git(node_repo, "config", "user.name", "Test")
+
+            # 1. SYNCED
+            res_sync = inspect_git_repo(str(node_repo), mode="auto_pull", do_fetch=True)
+            self.assertEqual(res_sync["state"], "SYNCED")
+
+            # 2. Peer pushes v2 -> fetch_only reports BEHIND without pulling
+            (peer / "README.md").write_text("v2\n", encoding="utf-8")
+            _git(peer, "commit", "-am", "v2")
+            _git(peer, "push")
+            res_behind = inspect_git_repo(str(node_repo), mode="fetch_only", do_fetch=True)
+            self.assertEqual(res_behind["state"], "BEHIND")
+            self.assertEqual(res_behind["behind"], 1)
+
+            # 3. Dirty working tree -> DIRTY_HOLD even with mode=auto_pull
+            (node_repo / "dirty.txt").write_text("wip\n", encoding="utf-8")
+            res_dirty = inspect_git_repo(str(node_repo), mode="auto_pull", do_fetch=True)
+            self.assertEqual(res_dirty["state"], "DIRTY_HOLD")
+            self.assertEqual(res_dirty["behind"], 1)
+            self.assertFalse(res_dirty["pulled"])
+            (node_repo / "dirty.txt").unlink()
+
+            # 4. Clean + auto_pull -> AUTO_PULLED
+            res_pull = inspect_git_repo(str(node_repo), mode="auto_pull", do_fetch=True)
+            self.assertEqual(res_pull["state"], "AUTO_PULLED")
+            self.assertTrue(res_pull["pulled"])
+            self.assertEqual((node_repo / "README.md").read_text(encoding="utf-8"), "v2\n")
+
+            # 5. Local unpushed commit -> AHEAD_HOLD
+            (node_repo / "local.txt").write_text("local\n", encoding="utf-8")
+            _git(node_repo, "add", "local.txt")
+            _git(node_repo, "commit", "-m", "local")
+            res_ahead = inspect_git_repo(str(node_repo), mode="auto_pull", do_fetch=True)
+            self.assertEqual(res_ahead["state"], "AHEAD_HOLD")
+            self.assertEqual(res_ahead["ahead"], 1)
+
+            # 6. Central dashboard summary highlights HOLD and BEHIND
+            summary = collect_git_watch_summary({
+                "agy1": {"git_repos": [res_ahead]},
+                "storage1": {"git_repos": [res_behind, res_sync]},
+            })
+            self.assertEqual(len(summary["hold_items"]), 1)
+            self.assertEqual(len(summary["behind_items"]), 1)
+            self.assertEqual(summary["synced_count"], 1)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

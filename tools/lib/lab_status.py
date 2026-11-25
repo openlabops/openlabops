@@ -51,6 +51,7 @@ EXPECTED_SYMLINKS = [
     "lab-info",
     "lab-backup",
     "lab-upgrade",
+    "lab-git-watch",
     "lab-man",
     "sync-ops-tools",
     "sync-ssh-config",
@@ -562,7 +563,116 @@ def check_nodes_and_packages(live_nodes_map: dict = None) -> dict:
     return {"nodes": nodes_report}
 
 
-def render_dashboard_borderless(tools_data: dict, keys_data: dict, nodes_data: dict, audit_data: dict, probe_elapsed: float = 0.0):
+def collect_git_watch_summary(live_nodes_map: dict) -> dict:
+    """彙整全網節點 Git 倉庫即時同步與防呆 (HOLD) 狀態"""
+    hold_states = {"DIRTY_HOLD", "AHEAD_HOLD", "DIRTY_AHEAD_HOLD", "DIVERGED_HOLD", "PULL_ERR"}
+    items = []
+    hold_items = []
+    behind_items = []
+    error_items = []
+    synced_count = 0
+
+    for hname, node_info in (live_nodes_map or {}).items():
+        for repo in node_info.get("git_repos", []) or []:
+            entry = dict(repo)
+            entry["hostname"] = hname
+            items.append(entry)
+            st = entry.get("state", "SYNCED")
+            if st in hold_states:
+                hold_items.append(entry)
+            elif st == "BEHIND":
+                behind_items.append(entry)
+            elif st == "FETCH_ERR":
+                error_items.append(entry)
+            else:
+                synced_count += 1
+
+    return {
+        "items": items,
+        "hold_items": hold_items,
+        "behind_items": behind_items,
+        "error_items": error_items,
+        "synced_count": synced_count,
+    }
+
+
+def render_git_watch_section(git_data: dict, box: bool = False):
+    """在中央看板高亮顯示 Git 防呆暫停 (HOLD) 與待拉取 (BEHIND) 倉庫"""
+    items = (git_data or {}).get("items", [])
+    if not items:
+        return
+    hold_items = git_data.get("hold_items", [])
+    behind_items = git_data.get("behind_items", [])
+    error_items = git_data.get("error_items", [])
+    synced_count = git_data.get("synced_count", 0)
+
+    if not hold_items and not behind_items and not error_items:
+        print(f"\033[32m● Git 倉庫同步: {synced_count} 個受控倉庫皆為最新且工作區乾淨。\033[0m")
+        return
+
+    col = "\033[1;31m" if hold_items else "\033[1;33m"
+    title = "📦 Git 倉庫同步與防呆警示 (Git Repos Sync & Guard)"
+    if box:
+        print()
+        print(card_top(title, col))
+        c1 = pad_cjk("節點", 12)
+        c2 = pad_cjk("倉庫 / 分支", 22)
+        c3 = pad_cjk("防呆 / 同步狀態", 22)
+        c4 = pad_cjk("待處理細節", 26)
+        print(card_row(f"\033[1m{c1} {c2} {c3} {c4}\033[0m", col))
+        print(card_div(col))
+    else:
+        print(f"\n{col}{title}\033[0m")
+        print(f"\033[2;33m{'─' * 86}\033[0m")
+
+    for r in hold_items + behind_items + error_items:
+        st = r.get("state", "")
+        h = truncate_cjk(r.get("hostname", "?"), 12)
+        repo_br = truncate_cjk(f"{r.get('name', '?')}:{r.get('branch', '?')}", 22)
+        dirty = r.get("dirty_count", 0)
+        ahead = r.get("ahead", 0)
+        behind = r.get("behind", 0)
+
+        if st in {"DIRTY_HOLD", "AHEAD_HOLD", "DIRTY_AHEAD_HOLD", "DIVERGED_HOLD", "PULL_ERR"}:
+            badge = f"\033[1;31m⛔ {st}\033[0m"
+            details = []
+            if dirty:
+                details.append(f"未commit:{dirty}")
+            if ahead:
+                details.append(f"未push:↑{ahead}")
+            if behind:
+                details.append(f"落後:↓{behind}")
+            if r.get("error"):
+                details.append(r["error"])
+            detail_str = ", ".join(details) or "已停機防呆"
+        elif st == "BEHIND":
+            badge = f"\033[1;33m⬇ 待 pull (↓{behind})\033[0m"
+            detail_str = "遠端有新 commit，請執行 git pull"
+        else:
+            badge = f"\033[33m⚠ {st}\033[0m"
+            detail_str = r.get("error") or "遠端連線失敗"
+
+        detail_str = truncate_cjk(detail_str, 26)
+        row_txt = f"{pad_cjk(h, 12)} {pad_cjk(repo_br, 22)} {pad_cjk(badge, 22)} {pad_cjk(detail_str, 26)}"
+        if box:
+            print(card_row(row_txt, col))
+        else:
+            print(f"  {row_txt}")
+
+    if box:
+        print(card_bot(col))
+    else:
+        print(f"\033[2;33m{'─' * 86}\033[0m")
+
+    if hold_items:
+        names = ", ".join(f"{r['hostname']}:{r['name']}" for r in hold_items)
+        print(f"\033[1;31m⛔ Git 防呆暫停 (HOLD): {names} 尚有未 commit 或未 push 內容，已停止自動更新！\033[0m")
+    if behind_items:
+        names = ", ".join(f"{r['hostname']}:{r['name']}(↓{r['behind']})" for r in behind_items)
+        print(f"\033[1;33m⬇ Git 待拉取提醒: {names} 落後遠端，請適時執行 git pull。\033[0m")
+
+
+def render_dashboard_borderless(tools_data: dict, keys_data: dict, nodes_data: dict, audit_data: dict, probe_elapsed: float = 0.0, git_data: dict = None):
     """極簡無外框表格模式 (Borderless Modern DevOps Table with i18n support)"""
     ver = tools_data["local_version"]
     ui_header(f"{t('status.header_title', 'OpenLabOps Cluster Status Dashboard (lab-status)')} v{ver}")
@@ -703,11 +813,13 @@ def render_dashboard_borderless(tools_data: dict, keys_data: dict, nodes_data: d
     elif not reboot_pending_nodes:
         print(f"\n\033[32m{t('status.cluster_healthy', '🎉 叢集健康: 全網伺服器套件皆為最新版本且運作正常。')}\033[0m")
 
+    render_git_watch_section(git_data, box=False)
 
-def render_dashboard(tools_data: dict, keys_data: dict, nodes_data: dict, audit_data: dict, probe_elapsed: float = 0.0, borderless: bool = False):
+
+def render_dashboard(tools_data: dict, keys_data: dict, nodes_data: dict, audit_data: dict, probe_elapsed: float = 0.0, borderless: bool = False, git_data: dict = None):
     """渲染全彩終端狀態儀表板 (支援精準對齊外框與極簡無框模式)"""
     if borderless:
-        render_dashboard_borderless(tools_data, keys_data, nodes_data, audit_data, probe_elapsed)
+        render_dashboard_borderless(tools_data, keys_data, nodes_data, audit_data, probe_elapsed, git_data=git_data)
         return
 
     ver = tools_data["local_version"]
@@ -862,6 +974,8 @@ def render_dashboard(tools_data: dict, keys_data: dict, nodes_data: dict, audit_
     elif not reboot_pending_nodes:
         print(f"\n\033[32m{t('status.cluster_healthy', '🎉 叢集健康: 全網伺服器套件皆為最新版本且運作正常。')}\033[0m")
 
+    render_git_watch_section(git_data, box=True)
+
 
 def render_debug_diagnostics(live_nodes_map: dict):
     """輸出各節點連線探測詳細診斷報告"""
@@ -983,6 +1097,7 @@ def main():
 
     nodes_data = check_nodes_and_packages(live_nodes_map)
     audit_data = audit_node_authorized_keys(ssot_keys, live_nodes_map)
+    git_data = collect_git_watch_summary(live_nodes_map)
 
     if args.json:
         result = {
@@ -992,6 +1107,7 @@ def main():
             "ssh_keys": keys_data,
             "authorized_keys_audit": audit_data,
             "nodes": nodes_data,
+            "git_watch": git_data,
         }
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return
@@ -1018,7 +1134,7 @@ def main():
         return
 
     # 預設採用無外框表格模式 (-t)，若管理者加上 -b / --box 則切換為卡片外框模式
-    render_dashboard(tools_data, keys_data, nodes_data, audit_data, probe_elapsed, borderless=not args.box)
+    render_dashboard(tools_data, keys_data, nodes_data, audit_data, probe_elapsed, borderless=not args.box, git_data=git_data)
 
     if args.debug:
         render_debug_diagnostics(live_nodes_map)

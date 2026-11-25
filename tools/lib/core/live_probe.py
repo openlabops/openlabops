@@ -151,9 +151,79 @@ try:
             if pkg_ver and running_ver and pkg_ver != running_ver:
                 reboot_required = True
                 reboot_reason = "kernel_updated"
+    elif os.path.exists("/bin/bsd-version"):
+        res = subprocess.run("bsd-version -k 2>/dev/null", shell=True, capture_output=True, text=True)
+        installed_k = res.stdout.strip()
+        running_k = os.uname().release
+        if installed_k and running_k and installed_k != running_k:
+            reboot_required = True
+            reboot_reason = "kernel_updated"
 except: pass
 
-print(json.dumps({"keys": keys, "upg_count": upg_count, "upg_samples": upg_samples, "reboot_required": reboot_required, "reboot_reason": reboot_reason}))
+git_repos = []
+try:
+    import glob as _glob
+    _git_env = os.environ.copy()
+    _git_env["GIT_OPTIONAL_LOCKS"] = "0"
+    _seen_paths = set()
+    _candidates = []
+    for _cf in sorted(_glob.glob("/run/*/git-watch.json") + _glob.glob("/home/*/.cache/*/git-watch.json") + ["/root/.cache/openlab/git-watch.json", "/root/.cache/openlab/git-watch.json"]):
+        if os.path.exists(_cf):
+            try:
+                _cdata = json.loads(open(_cf, "r", encoding="utf-8").read())
+                for _item in _cdata.get("repos", []):
+                    _p = _item.get("path", "")
+                    if _p and os.path.isdir(os.path.join(_p, ".git")) and _p not in _seen_paths:
+                        _seen_paths.add(_p)
+                        _candidates.append((_item.get("name") or os.path.basename(_p), _p, _item.get("mode", "fetch_only"), _item.get("state", ""), _item.get("error", "")))
+            except Exception:
+                pass
+    for _gp in sorted(["/root/docker-compose"] + _glob.glob("/home/*/docker-compose") + _glob.glob("/home/*/openlabops") + _glob.glob("/home/*/openlabops")):
+        if os.path.isdir(os.path.join(_gp, ".git")) and _gp not in _seen_paths:
+            _seen_paths.add(_gp)
+            _mode = "auto_pull" if _gp == "/root/docker-compose" else "fetch_only"
+            _candidates.append((os.path.basename(_gp), _gp, _mode, "", ""))
+    for _name, _rp, _mode, _c_state, _c_err in _candidates:
+        _br, _dirty, _ahead, _behind = "unknown", 0, 0, 0
+        try:
+            _r_br = subprocess.run(["git", "-C", _rp, "rev-parse", "--abbrev-ref", "HEAD"], capture_output=True, text=True, timeout=3, env=_git_env)
+            if _r_br.returncode == 0 and _r_br.stdout.strip():
+                _br = _r_br.stdout.strip()
+            _r_st = subprocess.run(["git", "-C", _rp, "status", "--porcelain"], capture_output=True, text=True, timeout=3, env=_git_env)
+            if _r_st.returncode == 0:
+                _dirty = len([l for l in _r_st.stdout.splitlines() if l.strip()])
+            _r_lr = subprocess.run(["git", "-C", _rp, "rev-list", "--left-right", "--count", "HEAD...@{u}"], capture_output=True, text=True, timeout=3, env=_git_env)
+            if _r_lr.returncode == 0 and _r_lr.stdout.strip():
+                _pts = _r_lr.stdout.strip().split()
+                if len(_pts) == 2 and _pts[0].isdigit() and _pts[1].isdigit():
+                    _ahead, _behind = int(_pts[0]), int(_pts[1])
+        except Exception:
+            pass
+        if _dirty > 0 and _ahead > 0:
+            _st = "DIRTY_AHEAD_HOLD"
+        elif _dirty > 0:
+            _st = "DIRTY_HOLD"
+        elif _ahead > 0 and _behind > 0:
+            _st = "DIVERGED_HOLD"
+        elif _ahead > 0:
+            _st = "AHEAD_HOLD"
+        elif _c_state == "PULL_ERR":
+            _st = "PULL_ERR"
+        elif _behind > 0:
+            _st = "BEHIND"
+        elif _c_state == "FETCH_ERR":
+            _st = "FETCH_ERR"
+        else:
+            _st = "SYNCED"
+        git_repos.append({
+            "name": _name, "path": _rp, "branch": _br, "mode": _mode,
+            "state": _st, "dirty_count": _dirty, "ahead": _ahead, "behind": _behind,
+            "error": _c_err,
+        })
+except Exception:
+    pass
+
+print(json.dumps({"keys": keys, "upg_count": upg_count, "upg_samples": upg_samples, "reboot_required": reboot_required, "reboot_reason": reboot_reason, "git_repos": git_repos}))
 '''
 
 
