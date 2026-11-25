@@ -923,10 +923,13 @@ def main():
             sys.path.insert(0, str(OPS_DIR))
         from engine.classifier import load_node_files
         context["nodes"] = load_node_files(write_back=False)
-        _def_ansible_u = context["cluster"].get("ansible_user", "ansible")
+        _def_admin_u = context["cluster"].get("admin_user", "labadmin")
+        _def_user_key = context["keys"].get("user", "openlab.key")
         for _n in context["nodes"]:
             if not _n.get("target_user"):
-                _n["target_user"] = _def_ansible_u
+                _n["target_user"] = _def_admin_u
+            if not _n.get("target_key"):
+                _n["target_key"] = _def_user_key
     except Exception:
         context["nodes"] = []
 

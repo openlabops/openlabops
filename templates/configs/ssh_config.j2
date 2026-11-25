@@ -9,13 +9,11 @@ Host {{ git_platform.host }} {{ git_platform.ip }}
     Port {{ git_platform.ssh_port }}
     User git
     IdentityFile ~/.ssh/{{ keys.git }}
-    IdentityFile ~/.ssh/gitea.key
     IdentitiesOnly yes
 
 Host github.com
     HostName github.com
     User git
-    IdentityFile ~/.ssh/github.key
     IdentityFile ~/.ssh/{{ keys.git }}
     IdentitiesOnly yes
 
@@ -35,8 +33,7 @@ Host gw-node {{ networks.gateway_ip }}
 Host {{ n.hostname }} {{ n.primary_ip }}
     HostName {{ n.primary_ip }}
     User {{ n.target_user }}
-    IdentityFile ~/.ssh/{{ keys.ansible }}
-    IdentityFile ~/.ssh/{{ keys.user }}
+    IdentityFile ~/.ssh/{{ n.target_key }}
     IdentitiesOnly yes
 {%- endfor %}
 {%- elif inventory is defined and inventory.servers is defined and inventory.servers.linux is defined %}
