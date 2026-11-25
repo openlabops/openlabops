@@ -8,7 +8,7 @@
 # Play 1: 追加新 SSH 公鑰至目標主機 authorized_keys
 # ==============================================================================
 - name: "追加新 Ansible 管理公鑰 (Stage 1 - Add New Public Key)"
-  hosts: "{{ target_hosts | default('servers:!dev') }}"
+  hosts: "{{ target_hosts | default('servers') }}"
   gather_facts: no
   tags:
     - add_new_key
@@ -34,7 +34,7 @@
 # Play 2: 使用新 SSH 私鑰驗證所有主機連線
 # ==============================================================================
 - name: "驗證新 Ansible 管理私鑰連線 (Stage 2 - Verify Connection with New Private Key)"
-  hosts: "{{ target_hosts | default('servers:!dev') }}"
+  hosts: "{{ target_hosts | default('servers') }}"
   gather_facts: no
   tags:
     - verify_new_key
@@ -49,7 +49,7 @@
 # Play 3: 安全移除舊 SSH 公鑰
 # ==============================================================================
 - name: "安全移除舊 Ansible 管理公鑰 (Stage 3 - Remove Old Public Key)"
-  hosts: "{{ target_hosts | default('servers:!dev') }}"
+  hosts: "{{ target_hosts | default('servers') }}"
   gather_facts: no
   tags:
     - remove_old_key
@@ -68,7 +68,7 @@
 # Play 4: 更新節點與本機紀錄之 Git Commit SHA 及解除開機門禁標記
 # ==============================================================================
 - name: "更新 Git Commit SHA 紀錄與開機門禁狀態 (Stage 4 - Update Synced Commit & Release Lockout)"
-  hosts: "{{ target_hosts | default('servers:!dev') }}"
+  hosts: "{{ target_hosts | default('servers') }}"
   gather_facts: no
   tags:
     - update_commit_stamp
