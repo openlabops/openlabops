@@ -1,4 +1,7 @@
 ---
 # WireGuard Mesh 雲端節點 (remote-node1, remote-node2) 經由 Gateway 192.168.1.254 連線
+admin_user: opc
 ansible_key_options: 'from="192.168.1.0/24"'
 ansible_key_options: 'from="192.168.1.0/24"'
+storage_key_options: 'from="192.168.1.0/24"'
+user_key_options: 'from="192.168.1.0/24"'
