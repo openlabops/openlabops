@@ -162,6 +162,23 @@
       loop: "{{ git_key_names }}"
       when: target_user_check.rc == 0 and deploy_git_keys and resolved_secrets_dir != '' and ('appliances' not in group_names) and ((node_category | default('server')) not in ['appliance', 'hypervisor', 'storage'])
 
+    - name: 確保 /root/.ssh 目錄存在 (0700)
+      ansible.builtin.file:
+        path: "/root/.ssh"
+        state: directory
+        owner: root
+        mode: '0700'
+      when: deploy_git_keys and resolved_secrets_dir != '' and ('appliances' not in group_names) and ((node_category | default('server')) not in ['appliance', 'hypervisor', 'storage'])
+
+    - name: 複製 Git 平台認證金鑰至 /root/.ssh/ (所有標準節點，排除 Appliance)
+      ansible.builtin.copy:
+        src: "{{ resolved_secrets_dir }}/ssh-key/{{ item }}"
+        dest: "/root/.ssh/{{ item }}"
+        owner: root
+        mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
+      loop: "{{ git_key_names }}"
+      when: deploy_git_keys and resolved_secrets_dir != '' and ('appliances' not in group_names) and ((node_category | default('server')) not in ['appliance', 'hypervisor', 'storage'])
+
     # --------------------------------------------------------------------------
     # 5. 部署標準 ~/.ssh/config 連線組態
     # --------------------------------------------------------------------------
