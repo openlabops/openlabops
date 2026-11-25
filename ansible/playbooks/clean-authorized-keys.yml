@@ -40,27 +40,26 @@
       run_once: true
 
     - name: 在控制端收集白名單公鑰指紋 (Base64 Key Blobs)
-      ansible.builtin.command:
-        cmd: >-
-          python3 -c '
-          import glob, json, os, sys
-          sec_dir, ans_pub, usr_pub, git_pub = sys.argv[1:5]
-          ans_blobs, usr_blobs = [], []
-          excluded = {ans_pub, git_pub, "kvm.pub", "storage.pub", "ansible.pub", "git.pub"}
-          for p in sorted(glob.glob(os.path.join(sec_dir, "ssh-key", "*.pub"))):
-              bn = os.path.basename(p)
-              with open(p, "r", encoding="utf-8", errors="ignore") as f:
-                  for line in f:
-                      parts = line.strip().split()
-                      blob = next((x for x in parts if x.startswith("AAAA")), "")
-                      if not blob:
-                          continue
-                      if bn == ans_pub:
-                          ans_blobs.append(blob)
-                      elif bn == usr_pub or bn not in excluded:
-                          usr_blobs.append(blob)
-          print(json.dumps({"ansible": sorted(set(ans_blobs)), "user": sorted(set(usr_blobs))}))
-          ' "{{ resolved_secrets_dir }}" "{{ ansible_pub_name }}" "{{ user_pub_name }}" "{{ git_pub_name }}"
+      ansible.builtin.shell: |
+        python3 - "{{ resolved_secrets_dir }}" "{{ ansible_pub_name }}" "{{ user_pub_name }}" "{{ git_pub_name }}" <<'PY'
+        import glob, json, os, sys
+        sec_dir, ans_pub, usr_pub, git_pub = sys.argv[1:5]
+        ans_blobs, usr_blobs = [], []
+        excluded = {ans_pub, git_pub, "kvm.pub", "storage.pub", "ansible.pub", "git.pub"}
+        for p in sorted(glob.glob(os.path.join(sec_dir, "ssh-key", "*.pub"))):
+            bn = os.path.basename(p)
+            with open(p, "r", encoding="utf-8", errors="ignore") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    blob = next((x for x in parts if x.startswith("AAAA")), "")
+                    if not blob:
+                        continue
+                    if bn == ans_pub:
+                        ans_blobs.append(blob)
+                    elif bn == usr_pub or bn not in excluded:
+                        usr_blobs.append(blob)
+        print(json.dumps({"ansible": sorted(set(ans_blobs)), "user": sorted(set(usr_blobs))}))
+        PY
       delegate_to: localhost
       become: false
       run_once: true
@@ -75,110 +74,108 @@
       when: whitelist_raw is defined and whitelist_raw.stdout is defined
 
     - name: 稽核並清理 {{ target_account }} 與 {{ ansible_account }} 之 authorized_keys
-      ansible.builtin.command:
-        cmd: >-
-          python3 -c '
-          import json, os, sys
-          dry_run = sys.argv[1].lower() == "true"
-          accounts = json.loads(sys.argv[2])
-          whitelist = json.loads(sys.argv[3])
-          report = []
-          for acct, role in accounts:
-              auth_path = f"/home/{acct}/.ssh/authorized_keys"
-              if not os.path.exists(auth_path):
-                  continue
-              allowed = set(whitelist.get(role, []))
-              if not allowed:
-                  report.append(f"{acct}: skipped (empty whitelist)")
-                  continue
-              with open(auth_path, "r", encoding="utf-8", errors="ignore") as f:
-                  lines = f.readlines()
-              kept, removed, seen = [], [], set()
-              for line in lines:
-                  s = line.strip()
-                  if not s or s.startswith("#"):
-                      kept.append(line)
-                      continue
-                  blob = next((x for x in s.split() if x.startswith("AAAA")), "")
-                  if blob in allowed and blob not in seen:
-                      seen.add(blob)
-                      kept.append(line)
-                  else:
-                      reason = "duplicate" if blob in seen else "unauthorized/stale"
-                      removed.append(f"{reason}: {s[:72]}")
-              if removed:
-                  if not dry_run and seen:
-                      with open(auth_path, "w", encoding="utf-8") as f:
-                          f.writelines(kept)
-                      os.chmod(auth_path, 0o600)
-                  action = "WOULD REMOVE" if dry_run else "REMOVED"
-                  report.append(f"{acct}: {action} {len(removed)} key(s) -> " + "; ".join(removed))
-              else:
-                  report.append(f"{acct}: clean ({len(seen)} valid key(s))")
-          root_auth = "/root/.ssh/authorized_keys"
-          if os.path.exists(root_auth):
-              allowed_root = set(whitelist.get("user", []))
-              if allowed_root:
-                  with open(root_auth, "r", encoding="utf-8", errors="ignore") as f:
-                      lines = f.readlines()
-                  kept, removed, seen = [], [], set()
-                  for line in lines:
-                      s = line.strip()
-                      if not s or s.startswith("#"):
-                          kept.append(line)
-                          continue
-                      blob = next((x for x in s.split() if x.startswith("AAAA")), "")
-                      if blob in allowed_root and blob not in seen:
-                          seen.add(blob)
-                          kept.append(line)
-                      else:
-                          reason = "duplicate" if blob in seen else "unauthorized/stale"
-                          removed.append(f"{reason}: {s[:72]}")
-                  if removed:
-                      if not dry_run and seen:
-                          with open(root_auth, "w", encoding="utf-8") as f:
-                              f.writelines(kept)
-                          os.chmod(root_auth, 0o600)
-                      action = "WOULD REMOVE" if dry_run else "REMOVED"
-                      report.append(f"root: {action} {len(removed)} key(s) -> " + "; ".join(removed))
-                  else:
-                      report.append(f"root: clean ({len(seen)} valid key(s))")
-          print(" | ".join(report) if report else "no authorized_keys found")
-          ' "{{ dry_run_mode | string }}" '{{ [[target_account, "user"], [ansible_account, "ansible"]] | to_json }}' '{{ whitelist_map | to_json }}'
+      ansible.builtin.shell: |
+        python3 - "{{ dry_run_mode | string }}" '{{ [[target_account, "user"], [ansible_account, "ansible"]] | to_json }}' '{{ whitelist_map | to_json }}' <<'PY'
+        import json, os, sys
+        dry_run = sys.argv[1].lower() == "true"
+        accounts = json.loads(sys.argv[2])
+        whitelist = json.loads(sys.argv[3])
+        report = []
+        for acct, role in accounts:
+            auth_path = f"/home/{acct}/.ssh/authorized_keys"
+            if not os.path.exists(auth_path):
+                continue
+            allowed = set(whitelist.get(role, []))
+            if not allowed:
+                report.append(f"{acct}: skipped (empty whitelist)")
+                continue
+            with open(auth_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            kept, removed, seen = [], [], set()
+            for line in lines:
+                s = line.strip()
+                if not s or s.startswith("#"):
+                    kept.append(line)
+                    continue
+                blob = next((x for x in s.split() if x.startswith("AAAA")), "")
+                if blob in allowed and blob not in seen:
+                    seen.add(blob)
+                    kept.append(line)
+                else:
+                    reason = "duplicate" if blob in seen else "unauthorized/stale"
+                    removed.append(f"{reason}: {s[:72]}")
+            if removed:
+                if not dry_run and seen:
+                    with open(auth_path, "w", encoding="utf-8") as f:
+                        f.writelines(kept)
+                    os.chmod(auth_path, 0o600)
+                action = "WOULD REMOVE" if dry_run else "REMOVED"
+                report.append(f"{acct}: {action} {len(removed)} key(s) -> " + "; ".join(removed))
+            else:
+                report.append(f"{acct}: clean ({len(seen)} valid key(s))")
+        root_auth = "/root/.ssh/authorized_keys"
+        if os.path.exists(root_auth):
+            allowed_root = set(whitelist.get("user", []))
+            if allowed_root:
+                with open(root_auth, "r", encoding="utf-8", errors="ignore") as f:
+                    lines = f.readlines()
+                kept, removed, seen = [], [], set()
+                for line in lines:
+                    s = line.strip()
+                    if not s or s.startswith("#"):
+                        kept.append(line)
+                        continue
+                    blob = next((x for x in s.split() if x.startswith("AAAA")), "")
+                    if blob in allowed_root and blob not in seen:
+                        seen.add(blob)
+                        kept.append(line)
+                    else:
+                        reason = "duplicate" if blob in seen else "unauthorized/stale"
+                        removed.append(f"{reason}: {s[:72]}")
+                if removed:
+                    if not dry_run and seen:
+                        with open(root_auth, "w", encoding="utf-8") as f:
+                            f.writelines(kept)
+                        os.chmod(root_auth, 0o600)
+                    action = "WOULD REMOVE" if dry_run else "REMOVED"
+                    report.append(f"root: {action} {len(removed)} key(s) -> " + "; ".join(removed))
+                else:
+                    report.append(f"root: clean ({len(seen)} valid key(s))")
+        print(" | ".join(report) if report else "no authorized_keys found")
+        PY
       register: clean_result
       changed_when: "'REMOVED ' in clean_result.stdout"
       when: whitelist_map is defined
 
     - name: 稽核並清理非 dev 節點殘留之歷史私鑰檔 (恪守 INV-02)
-      ansible.builtin.command:
-        cmd: >-
-          python3 -c '
-          import os, sys
-          dry_run = sys.argv[1].lower() == "true"
-          user_acct, git_pub = sys.argv[2], sys.argv[3]
-          git_priv = git_pub[:-4] + ".key" if git_pub.endswith(".pub") else git_pub
-          keep_names = {
-              git_priv, git_pub, "authorized_keys", "authorized_keys2",
-              "config", "known_hosts", "known_hosts.old", "sockets", "environment"
-          }
-          report = []
-          for ssh_dir in [f"/home/{user_acct}/.ssh", "/root/.ssh"]:
-              if not os.path.isdir(ssh_dir):
-                  continue
-              stale = []
-              for fn in sorted(os.listdir(ssh_dir)):
-                  fp = os.path.join(ssh_dir, fn)
-                  if not os.path.isfile(fp) or fn in keep_names or fn.startswith("config.bak."):
-                      continue
-                  if fn.endswith((".key", ".pub", ".pem")) or fn in ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"):
-                      stale.append(fn)
-                      if not dry_run:
-                          os.remove(fp)
-              if stale:
-                  action = "WOULD REMOVE" if dry_run else "REMOVED"
-                  report.append(f"{ssh_dir}: {action} {len(stale)} stale key file(s): " + ", ".join(stale))
-          print(" | ".join(report) if report else "no stale key files")
-          ' "{{ dry_run_mode | string }}" "{{ target_account }}" "{{ git_pub_name }}"
+      ansible.builtin.shell: |
+        python3 - "{{ dry_run_mode | string }}" "{{ target_account }}" "{{ git_pub_name }}" <<'PY'
+        import os, sys
+        dry_run = sys.argv[1].lower() == "true"
+        user_acct, git_pub = sys.argv[2], sys.argv[3]
+        git_priv = git_pub[:-4] + ".key" if git_pub.endswith(".pub") else git_pub
+        keep_names = {
+            git_priv, git_pub, "authorized_keys", "authorized_keys2",
+            "config", "known_hosts", "known_hosts.old", "sockets", "environment"
+        }
+        report = []
+        for ssh_dir in [f"/home/{user_acct}/.ssh", "/root/.ssh"]:
+            if not os.path.isdir(ssh_dir):
+                continue
+            stale = []
+            for fn in sorted(os.listdir(ssh_dir)):
+                fp = os.path.join(ssh_dir, fn)
+                if not os.path.isfile(fp) or fn in keep_names or fn.startswith("config.bak."):
+                    continue
+                if fn.endswith((".key", ".pub", ".pem")) or fn in ("id_rsa", "id_ed25519", "id_ecdsa", "id_dsa"):
+                    stale.append(fn)
+                    if not dry_run:
+                        os.remove(fp)
+            if stale:
+                action = "WOULD REMOVE" if dry_run else "REMOVED"
+                report.append(f"{ssh_dir}: {action} {len(stale)} stale key file(s): " + ", ".join(stale))
+        print(" | ".join(report) if report else "no stale key files")
+        PY
       register: stale_files_result
       changed_when: "'REMOVED ' in stale_files_result.stdout"
       when: "'dev' not in group_names and (node_category | default('server')) != 'dev'"
