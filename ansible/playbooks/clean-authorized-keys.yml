@@ -80,6 +80,9 @@
         dry_run = sys.argv[1].lower() == "true"
         accounts = json.loads(sys.argv[2])
         whitelist = json.loads(sys.argv[3])
+        def is_pinned(s):
+            low = s.lower()
+            return any(tag in low for tag in ("@keep", "# keep", "#keep", "no-clean", "pinned"))
         report = []
         for acct, role in accounts:
             auth_path = f"/home/{acct}/.ssh/authorized_keys"
@@ -98,7 +101,9 @@
                     kept.append(line)
                     continue
                 blob = next((x for x in s.split() if x.startswith("AAAA")), "")
-                if blob in allowed and blob not in seen:
+                if is_pinned(s):
+                    kept.append(line)
+                elif blob in allowed and blob not in seen:
                     seen.add(blob)
                     kept.append(line)
                 else:
@@ -126,7 +131,9 @@
                         kept.append(line)
                         continue
                     blob = next((x for x in s.split() if x.startswith("AAAA")), "")
-                    if blob in allowed_root and blob not in seen:
+                    if is_pinned(s):
+                        kept.append(line)
+                    elif blob in allowed_root and blob not in seen:
                         seen.add(blob)
                         kept.append(line)
                     else:
