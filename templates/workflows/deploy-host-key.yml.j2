@@ -60,7 +60,7 @@ jobs:
           author_email: 'ci-bot@{{ cluster.domain }}'
 
       - name: 執行 Ansible Playbook (Deploy $hostname.pub)
-        uses: ./.gitea/actions/execute-homelab-playbook
+        uses: ./.gitea/actions/execute-federation-playbook
         with:
           playbook: 'playbooks/deploy-host-key.yml'
           extra_vars: "host_name=${{ '{' }}{{ '{' }} inputs.host_name {{ '}' }}{{ '}' }} host_pub_key_path=/tmp/{{ git_platform.repo_prefix }}-secrets/ssh-key/${{ '{' }}{{ '{' }} inputs.host_name {{ '}' }}{{ '}' }}.pub"

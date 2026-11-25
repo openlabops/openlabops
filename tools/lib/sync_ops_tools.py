@@ -35,6 +35,7 @@ def _detect_local_workspace() -> str:
         Path(__file__).resolve().parent.parent,
         Path.home() / "openlabops" / "tools",
         Path.home() / "openlab-tools",
+        Path.home() / "openlabops" / "tools",
     ]
     for c in candidates:
         try:

@@ -26,7 +26,7 @@ jobs:
           git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
 
       - name: 自指定來源主機採集最新組態
-        uses: ./.gitea/actions/execute-homelab-playbook
+        uses: ./.gitea/actions/execute-federation-playbook
         with:
           playbook: "playbooks/fetch-node-configs.yml"
           extra_vars: "source_host=${{ '{' }}{{ '{' }} inputs.source_host || github.event.client_payload.source_host || 'base' {{ '}' }}{{ '}' }} custom_configs_root=/tmp/{{ git_platform.repo_prefix }}-configs"

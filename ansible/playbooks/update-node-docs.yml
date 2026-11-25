@@ -74,6 +74,33 @@
     # --------------------------------------------------------------------------
     # 2.1 針對 base 節點：自動自 network-db 容器導出 Network 拓撲資料 (免密碼)
     # --------------------------------------------------------------------------
+    - name: 確保目標 openlab-configs/network 目錄存在
+      ansible.builtin.file:
+        path: "{{ final_configs_dir | dirname }}/network"
+        state: directory
+        mode: '0755'
+      delegate_to: localhost
+      when: inventory_hostname == 'base'
+      failed_when: false
+
+    - name: 寫入 Network 拓撲至 openlab-configs/network/
+      ansible.builtin.copy:
+        src: /tmp/fetched_network/network_topology.json
+        dest: "{{ final_configs_dir | dirname }}/network/network_topology.json"
+        mode: '0644'
+      delegate_to: localhost
+      when: inventory_hostname == 'base'
+      failed_when: false
+
+    - name: 寫入 Network 拓撲至 openlab-configs/node-information/
+      ansible.builtin.copy:
+        src: /tmp/fetched_network/network_topology.json
+        dest: "{{ final_configs_dir }}/network_topology.json"
+        mode: '0644'
+      delegate_to: localhost
+      when: inventory_hostname == 'base'
+      failed_when: false
+
     - name: 抓取遠端節點手冊 JSON 檔案至控制端
       ansible.builtin.fetch:
         src: "/tmp/node_{{ inventory_hostname }}.json"

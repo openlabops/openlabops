@@ -27,7 +27,7 @@ echo "==========================================================================
 echo "[Phase 1/5] Injecting critical application & system payloads on targets (${TARGETS})..."
 ansible -i ansible/inventory/hosts.yml "${TARGETS}" -m shell -a "
 mkdir -p ${DR_TEST_DIR} &&
-echo '{\"service\":\"homelab-core\",\"version\":\"2.0\",\"timestamp\":\"${TIMESTAMP}\",\"status\":\"active\"}' > ${DR_TEST_DIR}/service.json &&
+echo '{\"service\":\"openlab-core\",\"version\":\"2.0\",\"timestamp\":\"${TIMESTAMP}\",\"status\":\"active\"}' > ${DR_TEST_DIR}/service.json &&
 echo 'CRITICAL_SYSTEM_STATE_${TIMESTAMP}' > ${DR_TEST_DIR}/state.db &&
 chmod 0644 ${DR_TEST_DIR}/service.json ${DR_TEST_DIR}/state.db
 " --become

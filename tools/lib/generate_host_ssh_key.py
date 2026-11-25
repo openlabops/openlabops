@@ -101,7 +101,7 @@ def generate_host_ssh_key(hostname: str, force_recreate: bool = False, passphras
                 ui_error("密碼輸入不一致，終止生成流程。")
                 return "", ""
 
-    comment = f"homelab-{hostname}-{time.strftime('%Y%m%d')}"
+    comment = f"openlab-{hostname}-{time.strftime('%Y%m%d')}"
     cmd = [
         "ssh-keygen", "-t", "ed25519", "-N", passphrase or "",
         "-C", comment, "-f", key_path

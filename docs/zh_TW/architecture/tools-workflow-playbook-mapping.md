@@ -156,6 +156,6 @@ flowchart TD
 當任何調度環節異常時，依照下列層次順序排查：
 1. **檢查 Tool CLI 輸出**：檢視 `tools/lib/` 是否正確取得 Gitea Token (`GITEA_TOKEN` 或 `~/.gitea_token`)。
 2. **檢查 Gitea Actions 狀態**：使用 `lab-status --workflows` 或進入 Gitea Web UI 查看工作流 Run ID 與各 Step 輸出。
-3. **檢查 Ansible 執行記錄**：檢視 Action 執行的 Composite Action `execute-homelab-playbook` 步驟紀錄，確認 SSH 連線、Extra Vars 注入與 Target Hosts 是否正確。
+3. **檢查 Ansible 執行記錄**：檢視 Action 執行的 Composite Action `execute-federation-playbook` 步驟紀錄，確認 SSH 連線、Extra Vars 注入與 Target Hosts 是否正確。
 4. **檢查受控端狀態**：透過 `lab-ssh <host>` 登入實機，檢查 `/var/log/` 與目標檔案是否正確套用。
 

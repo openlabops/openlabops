@@ -29,7 +29,7 @@
 | **`run-ansible-playbook`** | `./.gitea/actions/run-ansible-playbook` | • `playbook`: 劇本相對路徑<br>• `inventory`: 主機清單路徑 (預設 `openlab-ansible/inventory/hosts.yml`)<br>• `target_hosts`: 限制目標主機 (`-l`)<br>• `extra_vars`: 額外變數 (`-e`)<br>• `tags` / `skip_tags`: 執行/略過標籤 | 標準化 Playbook 調度引擎，自動注入 `ANSIBLE_HOST_KEY_CHECKING=False`，輸出乾淨執行紀錄。 |
 | **`git-sync-commit`** | `./.gitea/actions/git-sync-commit` | • `target_dir`: 目標倉庫目錄<br>• `commit_msg`: 提交訊息 (自動附加 `[skip ci]`)<br>• `author_name` / `author_email`: 提交者身分<br>• `branch`: 推送分支 (預設 `main`) | 冪等性檢測：若無實質變更則自動略過；有變更則自動配置身分、提交並推送。 |
 | **`generate-key-pair`** | `./.gitea/actions/generate-key-pair` | • `output_path`: 產出私鑰完整路徑<br>• `comment`: 公鑰標籤/備註<br>• `key_type`: `ed25519` (預設) 或 `rsa`<br>• `key_bits`: `4096` (RSA 專用) | 生成標準化、乾淨的加密金鑰對，自動設定 `0600` 權限。 |
-| **`execute-homelab-playbook`** | `./.gitea/actions/execute-homelab-playbook` | • `playbook`: 劇本名稱<br>• `key_name`: 所需管理私鑰<br>• `target_hosts`: 目標主機<br>• `extra_vars`: 參數變數 | **一站式高階 Action**：自動串接環境準備、Ansible 庫與 Secrets 庫檢出、SSH 鑑權注入至 Playbook 執行完畢，達成 1 步完成常規自動化。 |
+| **`execute-federation-playbook`** | `./.gitea/actions/execute-federation-playbook` | • `playbook`: 劇本名稱<br>• `key_name`: 所需管理私鑰<br>• `target_hosts`: 目標主機<br>• `extra_vars`: 參數變數 | **一站式高階 Action**：自動串接環境準備、Ansible 庫與 Secrets 庫檢出、SSH 鑑權注入至 Playbook 執行完畢，達成 1 步完成常規自動化。 |
 
 ---
 
@@ -57,7 +57,7 @@ steps:
     run: git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GITEA_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
 
   - name: 一鍵執行 Homelab 劇本
-    uses: ./.gitea/actions/execute-homelab-playbook
+    uses: ./.gitea/actions/execute-federation-playbook
     with:
       playbook: "playbooks/test-connectivity.yml"
       key_name: "ansible.key"
@@ -71,15 +71,15 @@ steps:
 
 | 工作流檔案 | 用途說明 | 觸發方式 | 所調用之 Composite Actions |
 | :--- | :--- | :--- | :--- |
-| **`test-connectivity.yml`** | 全網主機連通性檢測 | 手動派發 | `execute-homelab-playbook` |
-| **`system-base-setup.yml`** | 節點基礎環境與使用者初始化 | 手動派發 | `execute-homelab-playbook` |
-| **`pull-docker-compose.yml`** | 容器服務拉取與滾動重啟 | 手動/事件觸發 | `execute-homelab-playbook` |
-| **`deploy-openlab-tools.yml`** | 全網主機佈署 `openlab-tools` CLI | 手動/代碼推送 | `execute-homelab-playbook` |
-| **`deploy-ssh-keys.yml`** | 全網公鑰分發與授權收斂 | 手動派發 | `execute-homelab-playbook` |
-| **`deploy-wsl-key.yml`** | 派發管理員個人工作站公鑰 | 手動派發 | `execute-homelab-playbook` |
-| **`deploy-host-key.yml`** | 單一主機動態注入專屬公鑰 | 手動派發 | `execute-homelab-playbook` |
-| **`revoke-host-key.yml`** | 吊銷並清除特定主機之授權金鑰 | 手動派發 | `execute-homelab-playbook` |
-| **`harden-lab-ssh-2fa.yml`** | 啟用強化 SSH 雙因子身分驗證 | 手動派發 | `execute-homelab-playbook` |
+| **`test-connectivity.yml`** | 全網主機連通性檢測 | 手動派發 | `execute-federation-playbook` |
+| **`system-base-setup.yml`** | 節點基礎環境與使用者初始化 | 手動派發 | `execute-federation-playbook` |
+| **`pull-docker-compose.yml`** | 容器服務拉取與滾動重啟 | 手動/事件觸發 | `execute-federation-playbook` |
+| **`deploy-openlab-tools.yml`** | 全網主機佈署 `openlab-tools` CLI | 手動/代碼推送 | `execute-federation-playbook` |
+| **`deploy-ssh-keys.yml`** | 全網公鑰分發與授權收斂 | 手動派發 | `execute-federation-playbook` |
+| **`deploy-wsl-key.yml`** | 派發管理員個人工作站公鑰 | 手動派發 | `execute-federation-playbook` |
+| **`deploy-host-key.yml`** | 單一主機動態注入專屬公鑰 | 手動派發 | `execute-federation-playbook` |
+| **`revoke-host-key.yml`** | 吊銷並清除特定主機之授權金鑰 | 手動派發 | `execute-federation-playbook` |
+| **`harden-lab-ssh-2fa.yml`** | 啟用強化 SSH 雙因子身分驗證 | 手動派發 | `execute-federation-playbook` |
 | **`sync-node-config.yml`** | 採集節點組態並同步 Dotfiles | 手動/事件觸發 | `setup-environment`, `checkout-federation`, `setup-ssh-auth`, `run-ansible-playbook`, `git-sync-commit` |
 | **`sync-package-inventory.yml`** | 動態採集節點原生安裝套件清冊 | 手動/排程 | `setup-environment`, `checkout-federation`, `setup-ssh-auth`, `run-ansible-playbook`, `git-sync-commit` |
 | **`update-node-docs.yml`** | 採集節點硬體遙測事實並生成手冊 | 手動/排程 | `setup-environment`, `checkout-federation`, `setup-ssh-auth`, `run-ansible-playbook`, `git-sync-commit` |

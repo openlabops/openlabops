@@ -29,7 +29,7 @@ jobs:
           git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
 
       - name: 執行套件清單採集與比對劇本
-        uses: ./.gitea/actions/execute-homelab-playbook
+        uses: ./.gitea/actions/execute-federation-playbook
         with:
           playbook: 'playbooks/sync-package-inventory.yml'
           target_hosts: ${{ '{' }}{{ '{' }} inputs.target_hosts {{ '}' }}{{ '}' }}

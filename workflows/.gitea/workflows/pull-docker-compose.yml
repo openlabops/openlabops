@@ -21,7 +21,7 @@ jobs:
           git clone --quiet --depth 1 http://oauth2:${{ secrets.MASTER_TOKEN || secrets.BOT_TOKEN }}@${{ vars.GIT_HOST || 'gitea.lab' }}/${{ vars.ORG_NAME || 'OpenLabOps' }}/openlab-workflows.git .
 
       - name: 執行 Docker Compose 滾動重載劇本
-        uses: ./.gitea/actions/execute-homelab-playbook
+        uses: ./.gitea/actions/execute-federation-playbook
         with:
           playbook: 'playbooks/pull-docker-compose.yml'
           key_name: 'ansible.key'

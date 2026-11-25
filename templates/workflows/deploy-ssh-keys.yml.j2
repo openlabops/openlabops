@@ -44,7 +44,7 @@ jobs:
           git clone --quiet --depth 1 http://oauth2:${{ '{' }}{{ '{' }} secrets.MASTER_TOKEN || secrets.BOT_TOKEN {{ '}' }}{{ '}' }}@${{ '{' }}{{ '{' }} vars.GIT_HOST || '{{ git_platform.host }}' {{ '}' }}{{ '}' }}/${{ '{' }}{{ '{' }} vars.ORG_NAME || '{{ git_platform.org }}' {{ '}' }}{{ '}' }}/{{ git_platform.repo_prefix }}-workflows.git .
 
       - name: 執行節點 SSH 金鑰部署劇本
-        uses: ./.gitea/actions/execute-homelab-playbook
+        uses: ./.gitea/actions/execute-federation-playbook
         with:
           playbook: 'playbooks/deploy-node-ssh-keys.yml'
           extra_vars: "target_hosts=${{ '{' }}{{ '{' }} inputs.target_hosts {{ '}' }}{{ '}' }} target_user=${{ '{' }}{{ '{' }} inputs.target_user {{ '}' }}{{ '}' }} client_keys=${{ '{' }}{{ '{' }} inputs.deploy_client_keys {{ '}' }}{{ '}' }} authorized_keys=${{ '{' }}{{ '{' }} inputs.deploy_authorized_keys {{ '}' }}{{ '}' }} ssh_config=${{ '{' }}{{ '{' }} inputs.deploy_ssh_config {{ '}' }}{{ '}' }}"

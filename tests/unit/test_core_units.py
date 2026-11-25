@@ -434,11 +434,11 @@ class TestArchitecturalInvariants(unittest.TestCase):
         self.assertIn("default: 'false'", wf_content, "Workflow deploy_client_keys MUST default to 'false'")
         self.assertIn("source_commit_sha:", wf_content, "Workflow MUST declare source_commit_sha input")
 
-        act_path = REPO_ROOT / "workflows" / ".gitea" / "actions" / "execute-homelab-playbook" / "action.yml"
+        act_path = REPO_ROOT / "workflows" / ".gitea" / "actions" / "execute-federation-playbook" / "action.yml"
         act_content = act_path.read_text(encoding="utf-8")
         self.assertIn("source_commit_sha:", act_content, "Action MUST accept source_commit_sha")
         self.assertIn("repo_prefix:", act_content, "Action MUST parameterize repo_prefix [CODE-01]")
-        self.assertIn("git -C /tmp/openlab-secrets show", act_content, "Action MUST extract historical key for source_commit_sha")
+        self.assertIn('show "${SOURCE_SHA}:ssh-key/${KEY}"', act_content, "Action MUST extract historical key for source_commit_sha")
         self.assertNotIn('eval "$CMD"', act_content, "Action MUST NOT use unsafe eval [CODE-02]")
 
         run_act_path = REPO_ROOT / "workflows" / ".gitea" / "actions" / "run-ansible-playbook" / "action.yml"

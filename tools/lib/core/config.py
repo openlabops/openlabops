@@ -348,7 +348,7 @@ def get_repo_name(key: str) -> str:
         elif key == "tools":
             return f"{prefix}-tools"
 
-    return f"homelab-{key}"
+    return f"{get_cluster_prefix()}-{key}"
 
 def get_path(key: str, default: str = "") -> str:
     val = load_config().get("paths", {}).get(key, default)
