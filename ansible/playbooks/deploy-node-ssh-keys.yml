@@ -15,6 +15,7 @@
     target_account: "{{ target_user | default(admin_user | default('labadmin')) }}"
     ansible_account: "{{ ansible_service_user | default(cluster.ansible_user | default('lab')) if cluster is defined else (ansible_service_user | default('lab')) }}"
     deploy_client_keys: "{{ (client_keys | default('true')) | bool }}"
+    deploy_user_keys: "{{ (user_keys | default(client_keys | default('true'))) | bool }}"
     deploy_git_keys: "{{ (git_keys | default('true')) | bool }}"
     deploy_authorized_keys: "{{ (authorized_keys | default(auth_keys | default('true'))) | bool }}"
     deploy_ssh_config: "{{ (ssh_config | default('true')) | bool }}"
@@ -33,10 +34,12 @@
       - "{{ lookup('env', 'HOME') }}/openlab-configs"
 
     dev_only_key_names:
-      - "{{ (keys.user | default('id_user.key')) if keys is defined else 'id_user.key' }}"
-      - "{{ (keys.user | regex_replace('\\.key$', '.pub')) if keys is defined and keys.user is defined else 'openlab.pub' }}"
       - "{{ (keys.ansible | default('ansible.key')) if keys is defined else 'ansible.key' }}"
       - "{{ (keys.ansible | regex_replace('\\.key$', '.pub')) if keys is defined and keys.ansible is defined else 'lab.pub' }}"
+
+    user_key_names:
+      - "{{ (keys.user | default('id_user.key')) if keys is defined else 'id_user.key' }}"
+      - "{{ (keys.user | regex_replace('\\.key$', '.pub')) if keys is defined and keys.user is defined else 'openlab.pub' }}"
 
     git_key_names:
       - "{{ (keys.git | default('git.key')) if keys is defined else 'git.key' }}"
@@ -152,6 +155,15 @@
         mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
       loop: "{{ dev_only_key_names }}"
       when: target_user_check.rc == 0 and deploy_client_keys and resolved_secrets_dir != '' and ('dev' in group_names or (node_category | default('')) == 'dev')
+
+    - name: 複製內部維運主金鑰至 /home/{{ target_account }}/.ssh/ (內部標準節點，排除 Appliance 與 OCI)
+      ansible.builtin.copy:
+        src: "{{ resolved_secrets_dir }}/ssh-key/{{ item }}"
+        dest: "/home/{{ target_account }}/.ssh/{{ item }}"
+        owner: "{{ target_account }}"
+        mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
+      loop: "{{ user_key_names }}"
+      when: target_user_check.rc == 0 and deploy_user_keys and resolved_secrets_dir != '' and ('appliances' not in group_names) and ('openlab_mesh' not in group_names) and ('oci_osaka' not in group_names) and ('oci_tokyo' not in group_names) and ((node_category | default('server')) not in ['appliance', 'hypervisor', 'storage'])
 
     - name: 複製 Git 平台認證金鑰至 /home/{{ target_account }}/.ssh/ (所有標準節點，排除 Appliance)
       ansible.builtin.copy:

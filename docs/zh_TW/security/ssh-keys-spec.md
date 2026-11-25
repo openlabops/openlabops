@@ -33,7 +33,7 @@
 | 金鑰種類 | 宣告參數鍵名 | 預設演算法 | 目標受控帳號 | 來源 IP 限制 (ACL) | 核心職責 |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | **Ansible 自動化金鑰** | `keys.ansible` (`ansible.key`) | Ed25519 | `lab` | `service_lan` (`192.168.1.0/24`) | 僅限 Gitea Runner 與 `dev` 節點執行 Ansible 自動化調度專用 |
-| **全網管理主金鑰** | `keys.user` (`id_user.key`) | Ed25519 | `labadmin` *(Storage: `root`)* | `service_lan`, `user_lan`, `wg_lan` | 內部多個 LAN 節點通用免密維運管理 (禁止 OCI 反向連回) |
+| **全網管理主金鑰** | `keys.user` (`id_user.key`) | Ed25519 | `labadmin` *(Storage: `root`)* | `service_lan`, `user_lan` | 內部標準節點（排除 Appliance 與 OCI）間通用免密維運管理，並支援單向連往 OCI |
 | **Virtualization 宿主機金鑰** | `ansible.key` (`standard`) | RSA / ECDSA-384 | `root` | `service_lan` (`192.168.1.0/24`) | Generic Linux 宿主機管理專用 (隨主金鑰同週期輪換) |
 | **本地 Git 版控金鑰** | `keys.git` (`git.key`) | Ed25519 | `git` (API) | 無限制 | 所有標準節點（`dev`、`servers`、`desktops`，排除 `appliances`）向 Gitea / GitHub 提送代碼之通用憑據 |
 | **外部含密碼端點金鑰** | *(Pending 後續擴充)* | Ed25519 | `labadmin` | `wg_lan` (`192.168.1.0/24`) | 外部端點擴充保留項 |

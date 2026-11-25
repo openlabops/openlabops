@@ -9,13 +9,13 @@ ansible_ssh_private_key_file: "{% raw %}{{ lookup('env', 'HOME') }}{% endraw %}/
 
 # 規範中性金鑰網段存取限制 (Canonical Key Network Constraints)
 ansible_key_options: 'from="{{ networks.service_lan }}"'
-user_key_options: 'from="{{ networks.service_lan }}{% if networks.wg_lan is defined and networks.wg_lan != networks.service_lan %},{{ networks.wg_lan }}{% endif %}"'
+user_key_options: 'from="{{ networks.service_lan }}{% if networks.user_lan is defined and networks.user_lan != networks.service_lan %},{{ networks.user_lan }}{% endif %}"'
 endpoint_key_options: ""
 
 {% if git_platform.repo_prefix is defined and git_platform.repo_prefix != 'openlab' %}
 # 向後相容別名 (Legacy Key Option Aliases)
 ansible_key_options: 'from="{{ networks.service_lan }}"'
-user_key_options: 'from="{{ networks.service_lan }}{% if networks.wg_lan is defined and networks.wg_lan != networks.service_lan %},{{ networks.wg_lan }}{% endif %}"'
+user_key_options: 'from="{{ networks.service_lan }}{% if networks.user_lan is defined and networks.user_lan != networks.service_lan %},{{ networks.user_lan }}{% endif %}"'
 {% endif %}
 
 # 叢集網段定義與允許來源
