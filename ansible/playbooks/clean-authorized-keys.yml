@@ -156,7 +156,7 @@
 
     - name: 稽核並清理非 dev 節點殘留之歷史私鑰檔 (恪守 INV-02；內部標準節點保留通用維運金鑰)
       ansible.builtin.shell: |
-        python3 - "{{ dry_run_mode | string }}" "{{ target_account }}" "{{ git_pub_name }}" "{{ user_pub_name if ('openlab_mesh' not in group_names and 'oci_osaka' not in group_names and 'oci_tokyo' not in group_names) else '' }}" <<'PY'
+        python3 - "{{ dry_run_mode | string }}" "{{ target_account }}" "{{ git_pub_name }}" "{{ user_pub_name if ('service_lan' in group_names or 'user_lan' in group_names) else '' }}" <<'PY'
         import os, sys
         dry_run = sys.argv[1].lower() == "true"
         user_acct, git_pub, usr_pub = sys.argv[2], sys.argv[3], sys.argv[4]

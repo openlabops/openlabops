@@ -163,7 +163,7 @@
         owner: "{{ target_account }}"
         mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
       loop: "{{ user_key_names }}"
-      when: target_user_check.rc == 0 and deploy_user_keys and resolved_secrets_dir != '' and ('appliances' not in group_names) and ('openlab_mesh' not in group_names) and ('oci_osaka' not in group_names) and ('oci_tokyo' not in group_names) and ((node_category | default('server')) not in ['appliance', 'hypervisor', 'storage'])
+      when: target_user_check.rc == 0 and deploy_user_keys and resolved_secrets_dir != '' and ('appliances' not in group_names) and ('service_lan' in group_names or 'user_lan' in group_names) and ((node_category | default('server')) not in ['appliance', 'hypervisor', 'storage'])
 
     - name: 複製 Git 平台認證金鑰至 /home/{{ target_account }}/.ssh/ (所有標準節點，排除 Appliance)
       ansible.builtin.copy:

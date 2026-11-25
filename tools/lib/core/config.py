@@ -503,7 +503,7 @@ def get_cluster_targets(include_remote_cache: bool = True) -> list:
             hname = n.get("hostname", "")
             if not hname:
                 continue
-            lookup_name = "kvm" if hname == "virt-node1" else hname
+            lookup_name = hname.replace("_", "-")
             os_fam = n.get("os_family", "Linux")
             dist = n.get("distribution", os_fam)
             app_type = n.get("appliance_type", "none")
@@ -582,7 +582,7 @@ def get_cluster_targets(include_remote_cache: bool = True) -> list:
                         hname = n.get("hostname", "")
                         if not hname:
                             continue
-                        lookup_name = "kvm" if hname == "virt-node1" else hname
+                        lookup_name = hname.replace("_", "-")
                         os_fam = n.get("os_family", "Linux")
                         dist = n.get("distribution", os_fam)
                         app_type = n.get("appliance_type", "none")
