@@ -71,14 +71,21 @@
         resolved_configs_dir: "{{ (configs_stats.results | selectattr('stat.exists') | map(attribute='item') | first) | default('') }}"
 
     # --------------------------------------------------------------------------
-    # 2. 確保目標主機使用者 SSH 目錄安全 (0700)
+    # 2. 探測目標使用者是否存在，並確保其 SSH 目錄安全 (0700)
     # --------------------------------------------------------------------------
+    - name: 檢查目標使用者 {{ target_account }} 是否存在
+      ansible.builtin.command: "id {{ target_account }}"
+      register: target_user_check
+      changed_when: false
+      failed_when: false
+
     - name: 確保 /home/{{ target_account }}/.ssh 目錄存在 (0700)
       ansible.builtin.file:
         path: "/home/{{ target_account }}/.ssh"
         state: directory
         owner: "{{ target_account }}"
         mode: '0700'
+      when: target_user_check.rc == 0
 
     # --------------------------------------------------------------------------
     # 3. 部署 Authorized Keys (受控公鑰寫入 authorized_keys，遵循 INV-07 角色映射)
@@ -98,14 +105,14 @@
         key: "{{ openlab_pub_b64.content | b64decode | trim }}"
         key_options: "{{ user_key_options | default('from=\"192.168.1.0/24\"') }}"
         comment: "openlab-master"
-      when: deploy_authorized_keys and openlab_pub_b64.content is defined
+      when: target_user_check.rc == 0 and deploy_authorized_keys and openlab_pub_b64.content is defined
 
     - name: 清理 /home/{{ target_account }}/.ssh/authorized_keys 中舊版同 comment 之失效金鑰
       ansible.builtin.lineinfile:
         path: "/home/{{ target_account }}/.ssh/authorized_keys"
         regexp: '^(?!.*{{ (openlab_pub_b64.content | b64decode | trim).split()[1] | regex_escape }}).*openlab-master.*$'
         state: absent
-      when: deploy_authorized_keys and openlab_pub_b64.content is defined
+      when: target_user_check.rc == 0 and deploy_authorized_keys and openlab_pub_b64.content is defined
       failed_when: false
 
     - name: 讀取自動化公鑰 ({{ ansible_pub_filename }}) 內容
@@ -144,7 +151,7 @@
         owner: "{{ target_account }}"
         mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
       loop: "{{ dev_only_key_names }}"
-      when: deploy_client_keys and resolved_secrets_dir != '' and ('dev' in group_names or (node_category | default('')) == 'dev')
+      when: target_user_check.rc == 0 and deploy_client_keys and resolved_secrets_dir != '' and ('dev' in group_names or (node_category | default('')) == 'dev')
 
     - name: 複製 Git 平台認證金鑰至 /home/{{ target_account }}/.ssh/ (所有標準節點，排除 Appliance)
       ansible.builtin.copy:
@@ -153,7 +160,7 @@
         owner: "{{ target_account }}"
         mode: "{{ '0600' if item.endswith('.key') else '0644' }}"
       loop: "{{ git_key_names }}"
-      when: deploy_git_keys and resolved_secrets_dir != '' and ('appliances' not in group_names) and ((node_category | default('server')) not in ['appliance', 'hypervisor', 'storage'])
+      when: target_user_check.rc == 0 and deploy_git_keys and resolved_secrets_dir != '' and ('appliances' not in group_names) and ((node_category | default('server')) not in ['appliance', 'hypervisor', 'storage'])
 
     # --------------------------------------------------------------------------
     # 5. 部署標準 ~/.ssh/config 連線組態
@@ -165,7 +172,7 @@
         owner: "{{ target_account }}"
         mode: '0600'
         backup: yes
-      when: deploy_ssh_config and resolved_configs_dir != ''
+      when: target_user_check.rc == 0 and deploy_ssh_config and resolved_configs_dir != ''
 
     # --------------------------------------------------------------------------
     # 6. 更新目標節點之 openlab-secrets Git Commit SHA 記錄與解鎖門禁
@@ -185,7 +192,7 @@
         path: /etc/openlab
         state: directory
         owner: root
-        group: root
+        group: "{{ 'wheel' if ansible_facts['os_family'] == 'BSD' else 'root' }}"
         mode: '0755'
 
     - name: 在目標節點記錄最新已同步之 openlab-secrets Commit SHA
@@ -193,7 +200,7 @@
         content: "{{ current_git_sha.stdout | default('HEAD') }}\n"
         dest: /etc/openlab/last_synced_commit
         owner: root
-        group: root
+        group: "{{ 'wheel' if ansible_facts['os_family'] == 'BSD' else 'root' }}"
         mode: '0644'
 
     - name: 確保目標節點 /run/openlab 目錄存在
@@ -201,7 +208,7 @@
         path: /run/openlab
         state: directory
         owner: root
-        group: root
+        group: "{{ 'wheel' if ansible_facts['os_family'] == 'BSD' else 'root' }}"
         mode: '0755'
 
     - name: 建立目標節點 /run/openlab/synced_ok 解除門禁
@@ -209,7 +216,7 @@
         content: "synced_ok\n"
         dest: /run/openlab/synced_ok
         owner: root
-        group: root
+        group: "{{ 'wheel' if ansible_facts['os_family'] == 'BSD' else 'root' }}"
         mode: '0644'
 
     # --------------------------------------------------------------------------
